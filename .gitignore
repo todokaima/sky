@@ -12,3 +12,6 @@ logs/
 client/workspace.json
 client/*-config.json
 client/sessions/
+
+# What tools/install-deps.sh installed, for tools/uninstall-deps.sh
+tools/.installed

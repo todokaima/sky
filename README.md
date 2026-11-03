@@ -13,7 +13,20 @@ A workbench for testing services that talk over HTTP, Kafka and databases, and f
 ## Run it
 
 Needs Linux (the sniffers read the Docker bridges), sudo, Docker with Compose 2.20+, Java 21 and Maven, Python 3 with
-venv (`sudo apt install python3-venv` on Debian / Ubuntu).
+venv. On Debian / Ubuntu, `tools/install-deps.sh` installs whichever of them are missing (and adds you to the
+`docker` group) and writes down what it added; `tools/uninstall-deps.sh` takes exactly that away again later:
+
+```bash
+tools/install-deps.sh            # only what's missing; then log out and in if it added you to the docker group
+```
+
+| Installed | For | Undone by `tools/uninstall-deps.sh` |
+|---|---|---|
+| `openjdk-21-jdk`, `maven` | the client and NetCanvas (run with Maven) | the packages, if it installed them |
+| `python3-venv` | the sniffers' venv with scapy | the package, and `.venv` |
+| `docker.io`, `docker-compose-v2` (only without Docker) | the test stack, the client's query and script containers | the packages, the docker group |
+| `curl`, `git` | `run.sh`'s checks, cloning | the packages, if it installed them |
+| (made by running) Maven's libraries in `~/.m2`, the images in Docker, `logs/` | | `--maven-cache`, `--docker-data`, `logs/` always |
 
 ```bash
 docker compose up -d --build     # the test stack; the first time builds the services and pulls the images (a few GB)
