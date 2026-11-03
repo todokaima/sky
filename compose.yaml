@@ -1,0 +1,11 @@
+# The test stack only (testclient/): service1 :8085, service2 :8086, their PostgreSQL :2345 / :2346, Kafka :9092,
+# MySQL :3307, MariaDB :3308, MongoDB :27017, Redis :6379. The apps to work with start with ./run.sh.
+#
+#   docker compose up -d --build     start it (the first time builds the two services and pulls the stores' images)
+#   docker compose down              stop it (the databases start fresh next time)
+#
+# Needs Docker Compose 2.20 or newer, for include
+name: sky
+
+include:
+  - testclient/compose.yaml

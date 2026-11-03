@@ -1,0 +1,33 @@
+<!doctype html>
+<html xmlns:th="http://www.thymeleaf.org">
+<body>
+<!-- An if diamond: checks the result of the card before it, then follows its true (green) or false (red) port.
+     d is null for the blank one that the "If" button copies. -->
+<section th:fragment="card(d, i)" class="island movable node decision-card" data-kind="decision"
+         th:id="|decision-${i}|" th:data-node="|d${i}|">
+    <span class="port port-in" title="Click to disconnect the card that runs before this one"></span>
+    <div class="diamond handle" title="Drag to move, double-click to reset"><h2 th:text="|If ${i + 1}|">If 1</h2></div>
+    <span class="port port-out port-yes" data-list="next" title="True: drag onto a card to run it when the check holds"></span>
+    <span class="port port-out port-no" data-list="next-else" title="False: drag onto a card to run it when the check fails"></span>
+    <input type="hidden" class="next" th:name="|decisions[${i}].next|" th:value="${d?.next}">
+    <input type="hidden" class="next-else" th:name="|decisions[${i}].nextElse|" th:value="${d?.nextElse}">
+    <input type="hidden" class="when" th:name="|decisions[${i}].when|" th:value="${d?.when}">
+    <input type="hidden" class="layout" th:name="|decisions[${i}].layout|" th:value="${d?.layout}">
+    <div class="check">
+        <select class="mode" th:name="|decisions[${i}].mode|" onchange="setMode(this)"
+                title="expression: e.g. status == 200 && data.state == &quot;done&quot; / python or java: a script that returns true or false, and can set(...) variables for the branch it takes">
+            <option value="condition" th:selected="${d?.mode != 'python' and d?.mode != 'java'}">expression</option>
+            <option value="python" th:selected="${d?.mode == 'python'}">python</option>
+            <option value="java" th:selected="${d?.mode == 'java'}">java</option>
+        </select>
+        <textarea class="cond" rows="3" th:name="|decisions[${i}].condition|" th:text="${d?.condition}"></textarea>
+    </div>
+    <textarea class="out" rows="3" readonly th:name="|decisions[${i}].output|" th:text="${d?.output}"
+              placeholder="true / false..."></textarea>
+    <div class="mini">
+        <button type="button" class="add" onclick="duplicateNode(this)" title="Add a copy of this diamond (same check and links)">+</button>
+        <button type="button" class="remove" onclick="removeNode(this)" title="Remove this diamond">&minus;</button>
+    </div>
+</section>
+</body>
+</html>

@@ -1,0 +1,13 @@
+# NetCanvas on localhost:29994. Everything is in memory: a restart empties the graph and the pasted api-docs.
+services:
+  graphviz:
+    build: .
+    image: todokaima/graphviz:latest
+    ports:
+      - "29994:29994"
+    environment:
+      PORT: 29994
+      APIDOCS_HOST: host.docker.internal
+    # host.docker.internal is the host on Linux too, so a typed http://localhost:8085/v3/api-docs reaches the service
+    extra_hosts:
+      - "host.docker.internal:host-gateway"

@@ -1,0 +1,1122 @@
+<!DOCTYPE html>
+<!--
+  NetCanvas: a graph of "tabs" (nodes) joined by spline "messages" (edges).
+  - Click a tab to expand it and see its metadata; click a link or its bubble to expand the message.
+  - Physics (D3) only places nodes: new nodes are laid out once, then everything is pinned.
+    Nothing moves again unless you drag it or press "Re-layout".
+  - The Spring Boot API (/api/*) owns the data; the page refreshes every netcanvas.poll-ms.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NetCanvas</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js"></script>
+<style>
+  :root { --bg:#020617; --panel:#0f172a; --card:#1e293b; --line:#1e293b; --border:#334155;
+          --text:#e2e8f0; --muted:#94a3b8; --dim:#64748b; --accent:#38bdf8; --ok:#34d399; --danger:#f43f5e; }
+  * { box-sizing:border-box; }
+  body { margin:0; height:100vh; display:flex; background:var(--bg); color:var(--text); overflow:hidden;
+         font:13px/1.35 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; user-select:none; }
+  button { font:inherit; color:inherit; cursor:pointer; }
+
+  /* ── Sidebar ── */
+  aside { width:300px; flex:none; display:flex; flex-direction:column; background:var(--panel); border-right:1px solid var(--line); overflow-y:auto; z-index:1; }
+  .head-bar { display:flex; align-items:center; justify-content:space-between; padding:14px 16px; border-bottom:1px solid var(--line); }
+  .head-bar h1 { margin:0; font-size:16px; }
+  .badge { font-size:11px; padding:2px 8px; border-radius:99px; border:1px solid #34d39933; background:#34d3991a; color:var(--ok); }
+  .badge.off { border-color:#f43f5e33; background:#f43f5e1a; color:var(--danger); }
+  .head-right { display:flex; align-items:center; gap:8px; }
+  .head-right .btn { padding:4px 10px; }
+  section { padding:14px 16px 0; }
+  h2 { margin:0 0 8px; font-size:11px; font-weight:600; letter-spacing:.06em; text-transform:uppercase; color:var(--dim); }
+  .metrics { display:grid; grid-template-columns:repeat(4,1fr); gap:6px; }
+  .metric { background:#1e293b99; border:1px solid #33415580; border-radius:8px; padding:6px 4px; text-align:center; }
+  .metric span { display:block; font-size:10px; color:var(--muted); }
+  .metric b { font-size:15px; }
+  .grid2 { display:grid; grid-template-columns:1fr 1fr; gap:6px; }
+  .btn { display:flex; align-items:center; justify-content:center; gap:6px; padding:7px 10px; border-radius:8px; background:var(--card); border:1px solid var(--border); font-size:12px; }
+  .btn:hover { background:#273449; }
+  .btn.danger:hover { border-color:#f43f5e66; color:#fda4af; background:#f43f5e14; }
+  .chip i { width:8px; height:8px; border-radius:50%; flex:none; }
+  .seg { display:grid; grid-template-columns:repeat(3,1fr); gap:4px; padding:3px; border-radius:9px; background:var(--bg); border:1px solid var(--line); margin-bottom:6px; }
+  .seg button { padding:5px 0; border-radius:6px; border:0; background:none; color:var(--dim); font-size:12px; }
+  .seg button.on { background:var(--card); color:var(--text); }
+  .slider { margin-bottom:8px; }
+  .slider div { display:flex; justify-content:space-between; font-size:12px; color:var(--muted); margin-bottom:3px; }
+  input[type=range] { width:100%; accent-color:var(--ok); }
+  #panel { display:none; flex-direction:column; gap:8px; padding-bottom:4px; }
+  #panel label { display:flex; flex-direction:column; gap:4px; font-size:11px; color:var(--dim); }
+  #p-route { font-size:12px; color:var(--muted); }
+  input:not([type]), select, textarea { background:var(--bg); color:var(--text); border:1px solid var(--line); border-radius:7px; padding:6px 8px; font:inherit; user-select:text; }
+  textarea { font:12px/1.5 ui-monospace, monospace; resize:vertical; min-height:90px; }
+  input:focus, select:focus, textarea:focus { outline:none; border-color:var(--accent); }
+  #docs-list { display:flex; flex-direction:column; gap:4px; margin-bottom:6px; }
+  .doc-row { display:flex; align-items:center; gap:8px; padding:5px 8px; border-radius:7px; background:#1e293b99; border:1px solid #33415580; font-size:12px; }
+  .doc-row b { font-family:ui-monospace, monospace; }
+  .doc-row span { flex:1; color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .doc-row button { border:0; background:none; color:var(--dim); padding:0 2px; font-size:14px; }
+  .doc-row button:hover { color:var(--danger); }
+  .docs-empty { font-size:12px; color:var(--muted); margin-bottom:6px; }
+  #docs-input { width:100%; min-height:70px; }
+  .docs-add { display:grid; grid-template-columns:1fr auto; gap:6px; margin-top:6px; }
+  .hint { font-size:11px; color:var(--dim); margin:6px 0 0; }
+  .tips { margin-top:auto; padding:10px 16px; border-top:1px solid var(--line); background:#02061799; font-size:11px; color:var(--muted); }
+  .tips p { margin:3px 0; }
+
+  /* ── Canvas ── */
+  /* Matte night sky: a soft vignette, fine grain, scattered star dots of a few sizes over a faint dot grid */
+  main { flex:1; position:relative; background-color:#0b0912;
+         background-image:
+           radial-gradient(ellipse 120% 90% at 50% 45%, transparent 55%, #00000099 100%),
+           url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 .09 0 0 0 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E"),
+           radial-gradient(circle at 17% 23%, #ffffffb0 0 1px, transparent 1.6px),
+           radial-gradient(circle at 63% 71%, #d9ccff80 0 1.2px, transparent 2px),
+           radial-gradient(circle at 81% 12%, #ffffff60 0 .8px, transparent 1.4px),
+           radial-gradient(circle at 38% 88%, #ffe9c970 0 1px, transparent 1.8px),
+           radial-gradient(#ffffff14 1px, transparent 1.2px),
+           radial-gradient(ellipse 900px 600px at 15% 0%, #1c1430 0%, transparent 70%),
+           radial-gradient(ellipse 800px 700px at 100% 100%, #10182a 0%, transparent 70%);
+         background-size:100% 100%, 180px 180px, 173px 157px, 241px 223px, 97px 109px, 311px 293px, 26px 26px, 100% 100%, 100% 100%; }
+  #graph { width:100%; height:100%; display:block; cursor:grab; }
+  #graph:active { cursor:grabbing; }
+  .zoom { position:absolute; top:14px; right:14px; display:flex; gap:6px; }
+  .zoom button { width:34px; height:34px; border-radius:8px; border:1px solid var(--line); background:#0f172acc; color:var(--muted); font-size:16px; }
+  .zoom button:hover { color:#fff; }
+  #hint { position:absolute; bottom:14px; left:50%; transform:translateX(-50%); padding:6px 12px; border-radius:8px; background:#0f172acc; border:1px solid var(--line); color:var(--muted); font-size:12px; pointer-events:none; white-space:nowrap; }
+  #toast { position:absolute; bottom:56px; left:50%; transform:translateX(-50%); padding:8px 12px; border-radius:8px; background:var(--panel); border:1px solid #f43f5e55; display:none; }
+
+  /* Spline links */
+  .link .line { fill:none; stroke:#334155; stroke-width:2; }
+  .link .hit { fill:none; stroke:transparent; stroke-width:14; cursor:pointer; }
+  .link:hover .line, .link.sel .line { stroke:var(--accent); }
+
+  /* Shared metadata list */
+  dl { display:grid; grid-template-columns:auto 1fr; gap:4px 12px; margin:0; }
+  dt { color:var(--dim); white-space:nowrap; }
+  dd { margin:0; color:var(--text); font-family:ui-monospace, monospace; font-size:11.5px; word-break:break-word; }
+  .empty { color:var(--dim); font-style:italic; }
+  dt::after { content:" :"; }
+  dd pre { margin:0; font:inherit; white-space:pre-wrap; max-height:180px; overflow:auto; }
+  .acts { display:flex; gap:6px; margin-top:8px; }
+  .acts button { flex:1; padding:4px 0; border-radius:6px; background:var(--card); border:1px solid var(--border); color:var(--muted); font-size:11px; }
+  .acts button:hover { color:var(--text); border-color:var(--accent); }
+  .acts button[data-act="save"] { color:var(--ok); }
+  textarea.meta-edit { width:100%; min-height:0; font:11.5px/1.5 ui-monospace, monospace; resize:none; }
+  .err { color:var(--danger); font-size:11px; margin-top:4px; }
+
+  /* Tabs (nodes) — HTML inside <foreignObject> so they can expand */
+  .tab { width:100%; background:color-mix(in srgb, var(--panel) 88%, transparent); backdrop-filter:blur(3px); border:1px solid var(--border); border-radius:10px; box-shadow:0 6px 16px #0009; overflow:hidden; cursor:pointer; transition:border-color .15s; }
+  .tab .top { display:flex; align-items:center; gap:10px; height:42px; padding:0 10px; }
+  .tab .bar { width:4px; height:22px; border-radius:2px; background:var(--c); flex:none; }
+  /* The node's icon: what's on that port (a service, a database, Kafka, a caller), tinted by its type's colour */
+  .tab .ico { width:28px; height:28px; flex:none; display:grid; place-items:center; border-radius:8px;
+              background:color-mix(in srgb, var(--c) 16%, transparent); border:1px solid color-mix(in srgb, var(--c) 45%, transparent);
+              box-shadow:0 0 12px color-mix(in srgb, var(--c) 22%, transparent); }
+  .tab .ico svg { width:16px; height:16px; fill:none; stroke:var(--c); stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; }
+  .tab .port { color:var(--c); font-family:ui-monospace, monospace; }
+  .tab .t { flex:1; min-width:0; }
+  .tab b { display:block; font-size:12.5px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .tab small { color:var(--dim); font-size:11px; }
+  .tab .chev { color:var(--dim); font-size:11px; }
+  .tab .body { border-top:1px solid var(--line); padding:8px 10px 10px; font-size:12px; }
+  g.node:hover .tab { border-color:#475569; }
+  g.node.sel .tab { border-color:var(--accent); box-shadow:0 0 0 1px var(--accent), 0 6px 16px #0009; }
+  g.node.target .tab { border-color:var(--ok); box-shadow:0 0 0 1px var(--ok), 0 6px 16px #0009; }
+  g.node:active .tab { cursor:grabbing; }
+
+  /* Connection handles: drag from one circle to another to link tabs */
+  .handle { fill:var(--panel); stroke:#64748b; stroke-width:2; cursor:crosshair; transform-box:fill-box; transform-origin:center; transition:transform .12s, stroke .12s, fill .12s; }
+  .handle:hover, g.node.target .handle { stroke:var(--accent); fill:var(--accent); transform:scale(1.35); }
+  .linking .handle { stroke:var(--accent); }
+  .linking, .linking * { cursor:crosshair !important; }
+  #preview { fill:none; stroke:var(--accent); stroke-width:2; stroke-dasharray:6 5; pointer-events:none; }
+
+  /* Islands: floating, draggable, resizable detail panels for tabs */
+  #leaders { position:absolute; inset:0; width:100%; height:100%; pointer-events:none; }
+  #leaders path { fill:none; stroke:var(--accent); stroke-opacity:.45; stroke-width:1.5; stroke-dasharray:4 4; }
+  #islands { position:absolute; inset:0; pointer-events:none; overflow:hidden; z-index:1; }
+  .zoom, #hint, #toast { z-index:2; }
+  .island { position:absolute; pointer-events:auto; display:flex; flex-direction:column; background:#0f172af2; backdrop-filter:blur(8px);
+            border:1px solid var(--border); border-radius:12px; box-shadow:0 12px 32px #000a; }
+  .island.sel { border-color:var(--accent); }
+  .island.active { box-shadow:0 16px 40px #000c, 0 0 0 1px var(--accent); }
+  .ihead { display:flex; align-items:center; gap:10px; padding:10px 12px; border-bottom:1px solid var(--line); cursor:move; flex:none; }
+  .ihead .bar { width:4px; height:22px; border-radius:2px; background:var(--c); flex:none; }
+  .ihead .t { flex:1; min-width:0; }
+  .ihead b { display:block; font-size:13px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .ihead small { color:var(--dim); font-size:11px; }
+  .ihead button { width:26px; height:26px; border-radius:6px; border:1px solid transparent; background:none; color:var(--dim); font-size:16px; line-height:1; }
+  .ihead button:hover { color:var(--text); border-color:var(--border); }
+  .ibody { flex:1; overflow:auto; padding:10px 12px 12px; font-size:12px; user-select:text; }
+  .island dd pre { max-height:none; }
+  /* Word-style resize handles on corners and edges */
+  .rh { position:absolute; width:10px; height:10px; background:var(--panel); border:1.5px solid var(--accent); border-radius:2px; opacity:0; transition:opacity .15s; }
+  .island:hover .rh, .island.sel .rh, .island.active .rh { opacity:1; }
+  .rh.n  { top:-6px; left:calc(50% - 5px); cursor:ns-resize; }   .rh.s  { bottom:-6px; left:calc(50% - 5px); cursor:ns-resize; }
+  .rh.e  { right:-6px; top:calc(50% - 5px); cursor:ew-resize; }  .rh.w  { left:-6px; top:calc(50% - 5px); cursor:ew-resize; }
+  .rh.ne { top:-6px; right:-6px; cursor:nesw-resize; }           .rh.sw { bottom:-6px; left:-6px; cursor:nesw-resize; }
+  .rh.nw { top:-6px; left:-6px; cursor:nwse-resize; }            .rh.se { bottom:-6px; right:-6px; cursor:nwse-resize; }
+  g.node.has-island .tab .chev { color:var(--accent); }
+
+  /* Message bubbles (edges) */
+  .msg { display:inline-block; max-width:320px; background:#0b1220; border:1px solid var(--border); border-radius:13px; color:var(--muted); font-size:11.5px; box-shadow:0 4px 12px #0008; cursor:pointer; }
+  .msg .mtop { padding:4px 10px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .msg .mtop span { color:var(--text); }
+  .msg .body { border-top:1px solid var(--line); padding:8px 10px 10px; }
+  .msg .route { color:var(--dim); font-size:11px; margin-bottom:6px; }
+  .msg.open { border-radius:10px; min-width:220px; }
+  .msg .latest { color:var(--text); }
+  .msg .ago { color:var(--dim); margin-left:6px; font-size:10.5px; }
+  .msg .section { color:var(--dim); font-size:10px; text-transform:uppercase; letter-spacing:.06em; margin:10px 0 4px; }
+  .msg .section:first-of-type { margin-top:2px; }
+  .msg .latest-box { background:var(--panel); border:1px solid var(--line); border-radius:7px; padding:6px 8px; color:var(--text);
+                     font:11.5px/1.45 ui-monospace, monospace; white-space:pre-wrap; word-break:break-word; }
+  .msg .nav { display:flex; align-items:center; gap:6px; margin:2px 0 6px; }
+  .msg .nav button { width:26px; height:22px; border-radius:6px; background:var(--card); border:1px solid var(--border); color:var(--text); font-size:13px; line-height:1; }
+  .msg .nav button:hover:not(:disabled) { border-color:var(--accent); }
+  .msg .nav button:disabled { opacity:.3; cursor:default; }
+  .msg .nav span { flex:1; text-align:center; color:var(--muted); font-size:11px; }
+  .msg .rr { display:grid; gap:6px; }
+  .msg .rr .section { margin:0 0 3px; }
+  .msg .rr .latest-box { border-left:3px solid var(--accent); }
+  .msg .rr .res .latest-box { border-left-color:var(--ok); }
+  .msg .rr .res.bad .latest-box { border-left-color:var(--danger); }
+  .msg .rr .res.wait .latest-box { border-left-color:var(--warn, #f59e0b); color:var(--dim); font-style:italic; }
+  /* Expanded content is navigable: select/copy text, scroll long JSON (canvas pan/zoom don't steal it) */
+  .tab .body, .msg .body { user-select:text; cursor:auto; }
+  .scroll { max-height:220px; overflow:auto; overscroll-behavior:contain; }
+  .msg.fresh { animation:fresh 1.6s ease-out; }       /* flash when a new message arrives */
+  @keyframes fresh { 0% { border-color:var(--ok); box-shadow:0 0 0 5px #34d39955, 0 4px 12px #0008; } 100% { box-shadow:0 4px 12px #0008; } }
+  g.msgg:hover .msg, g.msgg.sel .msg { border-color:var(--accent); }
+  /* Collapsed bubble: a round icon sitting on the middle of the wire */
+  .msg.icon { display:block; width:26px; height:26px; border-radius:50%; position:relative; }
+  .msg.icon .mtop { padding:0; height:100%; display:grid; place-items:center; font-size:13px; color:var(--text); overflow:visible; }
+  .msg.icon.ok { border-color:#34d39999; }
+  .msg.icon.bad { border-color:var(--danger); color:var(--danger); }
+  .msg.icon.wait { border-color:var(--warn, #f59e0b); }
+  .msg.icon .count { position:absolute; top:-7px; right:-9px; min-width:16px; height:16px; padding:0 4px; border-radius:8px;
+                     background:var(--accent); color:#0b1220; font-size:10px; line-height:16px; text-align:center; }
+
+  @media (max-width:760px) { body { flex-direction:column; } aside { width:auto; max-height:42vh; border-right:0; border-bottom:1px solid var(--line); } }
+</style>
+</head>
+<body>
+<aside>
+  <div class="head-bar"><h1 id="title">NetCanvas</h1>
+    <div class="head-right"><span id="status" class="badge">connecting…</span>
+      <button class="btn danger" id="btn-reset" title="Delete every node, link and message, to start the next capture on an empty graph">Reset</button></div></div>
+
+  <section>
+    <div class="metrics">
+      <div class="metric"><span>Nodes</span><b id="m-nodes" style="color:#22d3ee">0</b></div>
+      <div class="metric"><span>Edges</span><b id="m-edges" style="color:#818cf8">0</b></div>
+      <div class="metric"><span>Density</span><b id="m-density" style="color:#34d399">0</b></div>
+      <div class="metric"><span>Avg deg</span><b id="m-degree" style="color:#c084fc">0</b></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Capture endpoints</h2>
+    <div id="docs-list"></div>
+    <textarea id="docs-input" placeholder="Empty: every request on the ports.&#10;&#10;Or, one per line:&#10;http://localhost:8085/v3/api-docs&#10;POST /orders&#10;GET /orders/{id}&#10;&#10;Or paste an api-docs JSON."></textarea>
+    <div class="docs-add">
+      <input id="docs-port" placeholder="Ports: 8085, 8086 (URLs: optional)">
+      <button class="btn" id="docs-add">Add</button>
+    </div>
+    <p class="hint">Just ports: every request on them is drawn. With api-docs URLs or endpoints: only those. An
+      api-docs URL goes on its own port unless you type ports. The client's Send starts the capture.</p>
+  </section>
+
+  <section>
+    <h2>Add node</h2>
+    <div class="grid2" id="chips"></div>
+  </section>
+
+  <section>
+    <h2>View</h2>
+    <div class="grid2">
+      <button class="btn" id="btn-expand">Open all</button>
+      <button class="btn" id="btn-collapse">Close all</button>
+      <button class="btn" id="btn-clear-edges">Clear edges</button>
+    </div>
+  </section>
+
+  <section>
+    <h2>Layout</h2>
+    <div class="slider"><div><span>Repulsion</span><span id="v-charge"></span></div><input type="range" id="s-charge" min="-1500" max="-50"></div>
+    <div class="slider"><div><span>Link distance</span><span id="v-distance"></span></div><input type="range" id="s-distance" min="60" max="500"></div>
+    <div class="slider"><div><span>Spacing</span><span id="v-collide"></span></div><input type="range" id="s-collide" min="40" max="250"></div>
+    <button class="btn" id="btn-relayout" style="width:100%">Re-layout</button>
+  </section>
+
+  <section id="panel">
+    <h2 id="p-title">Selected</h2>
+    <div id="p-route"></div>
+    <label>Label <input data-field="label" id="p-label"></label>
+    <label id="p-type-wrap">Type <select data-field="type" id="p-type"></select></label>
+    <button class="btn danger" id="p-delete">Delete</button>
+  </section>
+
+  <div class="tips">
+    <p>Hold &amp; drag a tab to move it · click to open its island</p>
+    <p>Drag an island by its title · resize it from any side or corner</p>
+    <p>Drag from a ● handle to another tab's ● to connect</p>
+    <p>Scroll to zoom · drag background to pan · Del removes selection</p>
+  </div>
+</aside>
+
+<main>
+  <svg id="graph"></svg>
+  <svg id="leaders"></svg>      <!-- dashed lines from tabs to their islands -->
+  <div id="islands"></div>      <!-- floating detail panels -->
+  <div class="zoom">
+    <button id="z-in" title="Zoom in">+</button>
+    <button id="z-out" title="Zoom out">−</button>
+    <button id="z-fit" title="Fit to content">⤢</button>
+  </div>
+  <div id="hint"></div>
+  <div id="toast"></div>
+</main>
+
+<script>
+const TAB_W = 190, HEAD_H = 44;
+let cfg = { title: 'NetCanvas', pollMs: 2000, types: [], physics: { charge: -500, distance: 200, collide: 110 },
+           island: { position: 'right', width: 340, height: 420, leaderLines: true } };
+let nodes = [], links = [], structure = '';
+let selected = null, dragging = false, linkFrom = null, linkTarget = null;   // selected = {kind:'node'|'edge', id}
+const openNodes = new Set(), openEdges = new Set();   // openNodes = tabs whose island is open; openEdges = expanded bubbles
+const msgView = new Map();   // edge id → 'at' of the exchange being viewed with ‹ › (absent = follow the latest)
+const lastSeen = new Map();   // edge id → timestamp of the newest message we've shown (for the flash)
+let editing = null;   // {kind, id, text, error}: the one tab/message whose metadata is being edited
+
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const color = t => (cfg.types.find(x => x.name === t) || {}).color || '#94a3b8';
+const fmt = v => (v !== null && typeof v === 'object' ? JSON.stringify(v) : String(v));
+const count = m => Object.keys(m || {}).length;
+const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
+const nodeById = id => nodes.find(n => n.id === id);
+
+// ── API ──
+async function api(method, path, body) {
+  const r = await fetch('/api' + path, { method, headers: { 'Content-Type': 'application/json' }, body: body && JSON.stringify(body) });
+  const d = await r.json().catch(() => null);
+  if (!r.ok) throw new Error(d?.message || r.statusText);
+  return d;
+}
+async function run(fn) {               // perform a change, then refresh
+  try { await fn(); } catch (e) { toast(e.message); }
+  await load();
+}
+
+// ── D3 setup ──
+const svg = d3.select('#graph');
+const container = svg.append('g');
+const linkLayer = container.append('g');
+const nodeLayer = container.append('g');
+const msgLayer = container.append('g');        // bubbles above tabs so an open message is readable
+const preview = container.append('path').attr('id', 'preview').style('display', 'none');   // link being dragged
+const zoom = d3.zoom().scaleExtent([0.2, 3])
+  .filter(e => e.type === 'wheel'
+    ? !e.target.closest?.('.scroll, pre, textarea')
+    : !e.ctrlKey && !e.button && !e.target.closest?.('textarea, button, .body')).on('zoom', e => { container.attr('transform', e.transform); updateLeaders(); });
+svg.call(zoom).on('dblclick.zoom', null);
+svg.on('click', e => { if (e.target === svg.node()) { selected = null; draw(); renderPanel(); } });
+const size = () => ({ w: svg.node().clientWidth, h: svg.node().clientHeight });
+
+// Physics is used only to *place* nodes. Pinned nodes (fx/fy set) never move.
+const sim = d3.forceSimulation()
+  .force('link', d3.forceLink().id(d => d.id))
+  .force('charge', d3.forceManyBody())
+  .force('collide', d3.forceCollide())
+  .force('x', d3.forceX())
+  .force('y', d3.forceY())
+  .alphaDecay(0.05)                              // settle in ~2s instead of ~5s
+  .on('tick', ticked)
+  .on('end', settle)
+  .stop();
+
+function layout(all) {
+  const p = cfg.physics, { w, h } = size(), [cx, cy] = d3.zoomTransform(svg.node()).invert([w / 2, h / 2]);
+  sim.force('charge').strength(p.charge);
+  sim.force('link').distance(p.distance);
+  sim.force('collide').radius(p.collide);
+  sim.force('x').x(cx).strength(all ? 0.05 : 0);   // only pull to the middle on a full re-layout
+  sim.force('y').y(cy).strength(all ? 0.05 : 0);
+  let free = 0;
+  nodes.forEach(n => {
+    if (all || n._new) { n.fx = n.fy = null; free++; } else { n.fx = n.x; n.fy = n.y; }
+  });
+  if (free) sim.alpha(all ? 1 : 0.7).restart();
+}
+function settle() {                              // simulation cooled down → pin and save what moved
+  nodes.forEach(n => {
+    if (n.fx == null) { n.fx = n.x; n.fy = n.y; n._new = false; savePosition(n); }
+  });
+}
+
+// ── Sync with the server ──
+async function load() {
+  if (dragging) return;
+  let g;
+  try { g = await api('GET', '/graph'); setStatus(true); } catch { setStatus(false); return; }
+
+  const old = new Map(nodes.map(n => [n.id, n]));
+  nodes = g.nodes.map(n => {
+    const o = old.get(n.id);
+    if (!o) {
+      const placed = n.x != null && n.y != null;
+      return { ...n, _sx: n.x, _sy: n.y, _new: !placed, ...(placed ? { fx: n.x, fy: n.y } : {}) };
+    }
+    if (n.x != null && (n.x !== o._sx || n.y !== o._sy)) {   // moved on the server (e.g. PATCH via curl)
+      o.x = o.fx = n.x; o.y = o.fy = n.y; o._sx = n.x; o._sy = n.y;
+    }
+    return Object.assign(o, { label: n.label, type: n.type, metadata: n.metadata || {} });
+  });
+
+  // Starting point for new nodes: average of placed neighbours, else the middle of the view
+  const byId = new Map(nodes.map(n => [n.id, n]));
+  nodes.filter(n => n._new && n.x == null).forEach(n => {
+    const nb = g.edges.flatMap(e => (e.from === n.id ? [e.to] : e.to === n.id ? [e.from] : []))
+      .map(id => byId.get(id)).filter(m => m && m.x != null);
+    const base = nb.length ? { x: d3.mean(nb, m => m.x), y: d3.mean(nb, m => m.y) } : viewCenter();
+    const a = Math.random() * 2 * Math.PI, r = nb.length ? cfg.physics.distance * 0.7 : Math.random() * 60;
+    n.x = base.x + Math.cos(a) * r; n.y = base.y + Math.sin(a) * r;
+  });
+
+  const next = nodes.map(n => n.id).join() + '|' + g.edges.map(e => e.id).join();
+  if (next !== structure) {
+    const first = !structure;
+    structure = next;
+    links = g.edges.map(e => ({ id: e.id, source: e.from, target: e.to, label: e.label, metadata: e.metadata || {}, messages: e.messages || [] }));
+    sim.nodes(nodes);
+    sim.force('link').links(links);
+    if (nodes.some(n => n._new)) layout(false);
+    if (first) setTimeout(fit, nodes.some(n => n._new) ? 900 : 50);
+  } else {
+    const eb = new Map(g.edges.map(e => [e.id, e]));
+    links.forEach(l => { const e = eb.get(l.id); l.label = e.label; l.metadata = e.metadata || {}; l.messages = e.messages || []; });
+  }
+  const now = Date.now();
+  links.forEach(l => {
+    const at = l.messages.at(-1)?.at;
+    if (lastSeen.has(l.id) && at && at !== lastSeen.get(l.id)) l._fresh = now;
+    lastSeen.set(l.id, at);
+  });
+  if (selected && !(selected.kind === 'node' ? nodeById(selected.id) : links.find(l => l.id === selected.id))) selected = null;
+  draw();
+  renderPanel();
+  metrics();
+}
+
+// ── Rendering ──
+const valueHtml = v => (v !== null && typeof v === 'object' ? `<pre>${esc(JSON.stringify(v, null, 2))}</pre>` : esc(String(v)));
+function metaHtml(m) {
+  const e = Object.entries(m || {});
+  return e.length ? `<dl>${e.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${valueHtml(v)}</dd>`).join('')}</dl>` : '<div class="empty">No metadata</div>';
+}
+// Readable view + Edit / Copy JSON, or the inline editor when this item is being edited
+function metaBlock(kind, item) {
+  if (editing?.kind === kind && editing.id === item.id) {
+    const rows = Math.max(3, editing.text.split('\n').length + 1);
+    return `<textarea class="meta-edit" spellcheck="false" rows="${rows}"
+        placeholder="name : teo, surname : kaimasidis&#10;…or paste JSON">${esc(editing.text)}</textarea>
+      ${editing.error ? `<div class="err">${esc(editing.error)}</div>` : ''}
+      <div class="acts"><button data-act="save" title="Ctrl+Enter">Save</button><button data-act="cancel" title="Esc">Cancel</button></div>`;
+  }
+  return `${metaHtml(item.metadata)}<div class="acts"><button data-act="edit">Edit</button><button data-act="copy">Copy JSON</button></div>`;
+}
+// What's on a port, by its number and the node's type: a database, Kafka, a cache, a web server, a caller, a service
+const ICONS = {
+  server:   '<rect x="4" y="4" width="16" height="6" rx="1.5"/><rect x="4" y="14" width="16" height="6" rx="1.5"/><path d="M8 7h.01M8 17h.01M12 7h4M12 17h4"/>',
+  db:       '<ellipse cx="12" cy="5.5" rx="7.5" ry="2.8"/><path d="M4.5 5.5v13c0 1.5 3.4 2.8 7.5 2.8s7.5-1.3 7.5-2.8v-13M4.5 12c0 1.5 3.4 2.8 7.5 2.8s7.5-1.3 7.5-2.8"/>',
+  stream:   '<circle cx="12" cy="12" r="2.2"/><circle cx="12" cy="4" r="1.8"/><circle cx="12" cy="20" r="1.8"/><circle cx="19" cy="8" r="1.8"/><circle cx="19" cy="16" r="1.8"/><path d="M12 5.8v4M12 14.2v4M13.9 10.9l3.3-1.9M13.9 13.1l3.3 1.9"/>',
+  cache:    '<path d="M13 3L5 13.5h6L10 21l8-10.5h-6z"/>',
+  web:      '<circle cx="12" cy="12" r="8.5"/><path d="M3.5 12h17M12 3.5c2.6 2.6 2.6 14.4 0 17M12 3.5c-2.6 2.6-2.6 14.4 0 17"/>',
+  terminal: '<rect x="3" y="4.5" width="18" height="15" rx="2.5"/><path d="M7 9.5l3 2.5-3 2.5M12.5 15h4.5"/>',
+};
+const portOf = d => +(d.metadata?.port ?? String(d.label).match(/\d+$/)?.[0] ?? NaN);
+function iconOf(d) {
+  const port = portOf(d);
+  if (d.type === 'Data' || [5432, 3306, 1433, 1521, 27017, 2345, 2346].includes(port)) return 'db';
+  if ([9092, 9093, 29092].includes(port)) return 'stream';
+  if ([6379, 11211].includes(port)) return 'cache';
+  if (d.type === 'External' || port >= 32768) return 'terminal';
+  if ([80, 443, 3000, 5173].includes(port)) return 'web';
+  return 'server';
+}
+function tabHtml(d) {
+  const open = openNodes.has(d.id), port = portOf(d);
+  const what = Number.isFinite(port) && String(port) !== String(d.label) ? `<span class="port">:${port}</span> · ` : '';
+  return `<div class="tab" style="--c:${esc(color(d.type))}">
+    <div class="top"><span class="ico" title="${esc(iconOf(d))}"><svg viewBox="0 0 24 24">${ICONS[iconOf(d)]}</svg></span>
+      <div class="t"><b>${esc(d.label)}</b><small>${what}${esc(d.type)} · ${plural(count(d.metadata), 'field')}</small></div>
+      <span class="chev" title="${open ? 'Island open' : 'Click to open'}">${open ? '⧉' : '▸'}</span></div></div>`;
+}
+const msgText = v => (typeof v === 'string' ? v : JSON.stringify(v));
+const shorten = (t, n) => (t.length > n ? t.slice(0, n - 1) + '…' : t);
+function ago(iso) {
+  const s = Math.max(0, (Date.now() - Date.parse(iso)) / 1000);
+  return s < 5 ? 'now' : s < 60 ? `${s | 0}s` : s < 3600 ? `${s / 60 | 0}m` : s < 86400 ? `${s / 3600 | 0}h` : `${s / 86400 | 0}d`;
+}
+// A message is treated as request/response when it has request|req and/or response|res|resp keys.
+// The server pairs separately captured requests and responses, so the latest may still be waiting for its response.
+function splitRR(data) {
+  if (!data || typeof data !== 'object' || Array.isArray(data)) return null;
+  const pick = names => Object.keys(data).find(k => names.includes(k.toLowerCase()));
+  const rq = pick(['request', 'req']), rs = pick(['response', 'res', 'resp']);
+  return rq || rs ? { req: rq ? data[rq] : undefined, res: rs ? data[rs] : undefined } : null;
+}
+// Short text for the collapsed bubble: "POST /orders → 201" when it can find method/path/status, else compact JSON
+function summarize(data) {
+  const rr = splitRR(data);
+  if (!rr) return msgText(data);
+  const part = (v, keys) => {
+    if (v == null) return '';
+    if (typeof v !== 'object') return String(v);
+    const bits = keys.map(k => v[k]).filter(x => x != null && typeof x !== 'object');
+    return bits.length ? bits.join(' ') : JSON.stringify(v);
+  };
+  const req = part(rr.req, ['method', 'path', 'url', 'endpoint']);
+  const res = part(rr.res, ['status', 'code', 'statusText']);
+  if (rr.res === undefined) return `${req} → …`;          // request captured, response not yet
+  if (rr.req === undefined) return `… → ${res}`;
+  return [req, res].filter(Boolean).join(' → ');
+}
+const statusOf = res => (res && typeof res === 'object' ? +(res.status ?? res.code) : NaN);
+const pretty = v => esc(typeof v === 'string' ? v : JSON.stringify(v, null, 2));
+
+// Which exchange the expanded bubble shows: the one picked with ‹ ›, else the latest
+function viewIndex(l) {
+  const msgs = l.messages || [], at = msgView.get(l.id);
+  const i = at ? msgs.findIndex(m => m.at === at) : -1;
+  if (at && i < 0) msgView.delete(l.id);      // rolled off / re-timestamped → back to following the latest
+  return i >= 0 ? i : msgs.length - 1;
+}
+function stepMessage(l, delta) {
+  const msgs = l.messages || [], i = Math.max(0, Math.min(msgs.length - 1, viewIndex(l) + delta));
+  if (i === msgs.length - 1) msgView.delete(l.id); else msgView.set(l.id, msgs[i].at);
+  draw();
+}
+
+// Collapsed: ✉ latest request → response · age.  Expanded: one exchange (‹ › to browse), then the link's metadata.
+function msgHtml(l) {
+  const open = openEdges.has(l.id), msgs = l.messages || [], last = msgs.at(-1);
+  const fresh = l._fresh && Date.now() - l._fresh < 1500;
+  const label = l.label ? `<span>${esc(l.label)}</span>` : '';
+  const head = last
+    ? `<span class="latest">${esc(shorten(summarize(last.data), 44))}</span><span class="ago">${ago(last.at)}</span>`
+    : label || (count(l.metadata) ? plural(count(l.metadata), 'field') : '');
+  // Collapsed: just an icon on the middle of the wire (how many messages; red: the latest failed, amber: waiting)
+  if (!open) {
+    const rr = last && splitRR(last.data), code = rr && statusOf(rr.res);
+    const state = !rr ? '' : rr.res === undefined ? 'wait' : code >= 400 ? 'bad' : 'ok';
+    const tip = last ? `${summarize(last.data)} · ${ago(last.at)}` : (l.label || 'No messages yet');
+    return `<div class="msg icon ${state} ${fresh ? 'fresh' : ''}" title="${esc(tip)}"><div class="mtop">✉${msgs.length > 1 ? `<b class="count">${msgs.length}</b>` : ''}</div></div>`;
+  }
+  let body = '';
+  if (open) {
+    let latest = '<div class="empty">No messages yet</div>';
+    if (last) {
+      const idx = viewIndex(l), cur = msgs[idx], isLatest = idx === msgs.length - 1;
+      const rr = splitRR(cur.data), code = rr && statusOf(rr.res);
+      const nav = msgs.length > 1 ? `<div class="nav">
+          <button data-act="prev" title="Previous (←)" ${idx === 0 ? 'disabled' : ''}>‹</button>
+          <span>${idx + 1} / ${msgs.length}${isLatest ? ' · latest' : ''}</span>
+          <button data-act="next" title="Next (→)" ${isLatest ? 'disabled' : ''}>›</button></div>` : '';
+      latest = nav + `<div class="section">${isLatest ? 'Latest' : '#' + (idx + 1)} · ${esc(new Date(cur.at).toLocaleTimeString())}${isLatest ? '' : ' · ' + esc(shorten(summarize(cur.data), 30))}</div>` + (rr
+        ? `<div class="rr">
+             ${rr.req !== undefined ? `<div class="req"><div class="section">Request</div><div class="latest-box scroll">${pretty(rr.req)}</div></div>` : ''}
+             ${rr.res !== undefined ? `<div class="res ${code >= 400 ? 'bad' : ''}"><div class="section">Response</div><div class="latest-box scroll">${pretty(rr.res)}</div></div>`
+               : rr.req !== undefined ? `<div class="res wait"><div class="section">Response</div><div class="latest-box">waiting for response…</div></div>` : ''}
+           </div>`
+        : `<div class="latest-box scroll">${pretty(cur.data)}</div>`)
+        + `<div class="acts"><button data-act="copy-msg">Copy message</button></div>`;
+    }
+    body = `<div class="body"><div class="route">${esc(l.source.label)} → ${esc(l.target.label)}${l.label ? ` · ${esc(l.label)}` : ''}</div>
+      ${latest}
+      <div class="section">Metadata</div>${metaBlock('edge', l)}</div>`;
+  }
+  return `<div class="msg ${open ? 'open' : ''} ${fresh ? 'fresh' : ''}"><div class="mtop">✉${head ? ' ' + head : ''}</div>${body}</div>`;
+}
+
+// Re-render a foreignObject's HTML only when it changed, then size the box to its content.
+function updateFO(g, html, width) {
+  const fo = g.select('foreignObject'), div = fo.select('div').node();
+  if (div._html === html && div._w === width) return div._size;
+  div._html = html; div._w = width;
+  fo.attr('width', width ?? 400).attr('height', 600);   // roomy box so the content can lay out
+  div.innerHTML = html;
+  const box = div.firstElementChild;
+  div._size = { w: width ?? box.offsetWidth + 2, h: box.offsetHeight + 2 };
+  fo.attr('width', div._size.w).attr('height', div._size.h);
+  return div._size;
+}
+
+const tabW = () => TAB_W;
+
+// Hold & drag a tab body to move it (drags that start on a handle are for connecting instead)
+const drag = d3.drag()
+  .filter(e => !e.button && !e.target.closest('.handle, textarea, button, .body'))
+  .on('start', (e, d) => { dragging = true; d._moved = false; })
+  .on('drag', (e, d) => { d._moved = true; d.x = d.fx = e.x; d.y = d.fy = e.y; ticked(); })
+  .on('end', (e, d) => { dragging = false; if (d._moved) savePosition(d); });
+
+// Drag from a handle → dashed spline follows the cursor → release on another tab/handle to link
+function tabUnder(ev) {
+  const p = ev.changedTouches?.[0] || ev;
+  const el = document.elementFromPoint(p.clientX, p.clientY)?.closest('g.node');
+  return el ? d3.select(el).datum() : null;
+}
+const connect = d3.drag()
+  .container(() => container.node())                      // pointer coords in graph space
+  .subject(e => { const [x, y] = d3.pointer(e, container.node()); return { x, y }; })   // e.x/e.y = the cursor
+  .on('start', function (e, d) {
+    dragging = true;
+    linkFrom = { node: d, side: +this.dataset.side };
+    svg.classed('linking', true);
+    preview.style('display', null);
+  })
+  .on('drag', (e, d) => {
+    const t = tabUnder(e.sourceEvent);
+    linkTarget = t && t.id !== d.id ? t : null;
+    nodeLayer.selectAll('g.node').classed('target', n => n === linkTarget);
+    const p0 = handlePoint(d, linkFrom.side);
+    const end = linkTarget ? handlePoint(linkTarget, linkTarget.x >= d.x ? -1 : 1) : { x: e.x, y: e.y };
+    preview.attr('d', curve(p0, linkFrom.side, end, end.x >= p0.x ? -1 : 1).d);
+  })
+  .on('end', (e, d) => {
+    dragging = false;
+    svg.classed('linking', false);
+    preview.style('display', 'none');
+    nodeLayer.selectAll('g.node').classed('target', false);
+    const t = linkTarget;
+    linkFrom = linkTarget = null;
+    if (t) run(() => api('POST', '/edges', { from: d.id, to: t.id }));
+  });
+
+function draw() {
+  const isSel = (kind, id) => selected?.kind === kind && selected.id === id;
+
+  linkLayer.selectAll('g.link').data(links, d => d.id).join(enter => {
+    const g = enter.append('g').on('click', onEdgeClick);
+    g.append('path').attr('class', 'line');
+    g.append('path').attr('class', 'hit');
+    return g;
+  }).attr('class', d => `link ${isSel('edge', d.id) ? 'sel' : ''}`);
+
+  msgLayer.selectAll('g.msgg').data(links, d => d.id).join(enter => {
+    const g = enter.append('g').on('click', onEdgeClick);
+    g.append('foreignObject').attr('overflow', 'visible').append('xhtml:div');
+    return g;
+  }).attr('class', d => `msgg ${isSel('edge', d.id) ? 'sel' : ''}`)
+    .each(function (d) { if (!keepEditor('edge', d.id, this)) d._w = updateFO(d3.select(this), msgHtml(d)).w; });
+
+  nodeLayer.selectAll('g.node').data(nodes, d => d.id).join(enter => {
+    const g = enter.append('g').call(drag).on('click', onNodeClick);
+    g.append('foreignObject').attr('overflow', 'visible').append('xhtml:div');
+    for (const side of [-1, 1]) {                          // left and right handles
+      g.append('circle').attr('class', 'handle').attr('r', 6).attr('data-side', side)
+        .call(connect).on('click', e => e.stopPropagation());
+    }
+    return g;
+  }).attr('class', d => `node ${isSel('node', d.id) ? 'sel' : ''} ${openNodes.has(d.id) ? 'has-island' : ''}`)
+    .each(function (d) {
+      const w = tabW(d), g = d3.select(this);
+      if (!keepEditor('node', d.id, this)) updateFO(g, tabHtml(d), w);
+      g.select('foreignObject').attr('x', -w / 2).attr('y', -HEAD_H / 2);
+      g.selectAll('.handle').attr('cx', function () { return +this.dataset.side * w / 2; });
+    });
+  renderIslands();
+  if (editing) editing.force = false;
+  ticked();
+}
+// True while the user is typing in this item's metadata editor (unless we need to re-render it, e.g. to show an error)
+const keepEditor = (kind, id, el) => editing?.kind === kind && editing.id === id && !editing.force && !!el.querySelector('textarea.meta-edit');
+
+// Where a handle sits: middle of the tab's left (-1) or right (+1) edge
+const handlePoint = (d, side) => ({ x: d.x + side * tabW(d) / 2, y: d.y });
+
+// Cubic spline that leaves p0 horizontally towards side0 and enters p3 from side3
+function curve(p0, side0, p3, side3) {
+  const c = Math.max(60, Math.abs(p3.x - p0.x) / 2);
+  const c1 = [p0.x + side0 * c, p0.y], c2 = [p3.x + side3 * c, p3.y];
+  return {
+    d: `M${p0.x},${p0.y} C${c1} ${c2} ${p3.x},${p3.y}`,
+    mid: { x: (p0.x + 3 * c1[0] + 3 * c2[0] + p3.x) / 8, y: (p0.y + 3 * c1[1] + 3 * c2[1] + p3.y) / 8 },
+  };
+}
+// A link runs between the facing handles: right side of the left tab → left side of the right tab
+function edgeCurve(s, t) {
+  const side = t.x >= s.x ? 1 : -1;
+  return curve(handlePoint(s, side), side, handlePoint(t, -side), -side);
+}
+
+function ticked() {
+  linkLayer.selectAll('g.link').each(function (d) {
+    if (typeof d.source !== 'object') return;
+    const sp = edgeCurve(d.source, d.target);
+    d._mid = sp.mid;
+    d3.select(this).selectAll('path').attr('d', sp.d);
+  });
+  msgLayer.selectAll('g.msgg').attr('transform', d => d._mid ? `translate(${d._mid.x - (d._w || 30) / 2},${d._mid.y - 13})` : null);
+  nodeLayer.selectAll('g.node').attr('transform', d => `translate(${d.x},${d.y})`);
+  updateLeaders();
+}
+
+function metrics() {   // density = E / (N(N-1)/2), avg degree = 2E / N
+  const n = nodes.length, e = links.length, max = n > 1 ? n * (n - 1) / 2 : 0;
+  $('#m-nodes').textContent = n;
+  $('#m-edges').textContent = e;
+  $('#m-density').textContent = (max ? e / max : 0).toFixed(2);
+  $('#m-degree').textContent = (n ? 2 * e / n : 0).toFixed(1);
+}
+
+// ── Interaction: click = expand/collapse + select ──
+function toggle(set, id) { set.has(id) ? set.delete(id) : set.add(id); }
+
+function onNodeClick(e, d) {
+  e.stopPropagation();
+  const act = e.target.closest('[data-act]');
+  if (act) return metaAction(act.dataset.act, 'node', d, this);
+  const isl = islandOf(d.id);
+  if (isl && +isl.style.zIndex !== islandZ) isl.style.zIndex = ++islandZ;   // buried → bring to front
+  else toggle(openNodes, d.id);
+  selected = { kind: 'node', id: d.id };
+  d3.select(this).raise();
+  draw(); renderPanel();
+}
+function onEdgeClick(e, d) {
+  e.stopPropagation();
+  const act = e.target.closest('[data-act]');
+  if (act) return metaAction(act.dataset.act, 'edge', d, this);
+  if (e.target.closest('.body')) return;
+  toggle(openEdges, d.id);
+  selected = { kind: 'edge', id: d.id };
+  draw(); renderPanel();
+}
+
+function savePosition(d) {
+  d._sx = Math.round(d.x); d._sy = Math.round(d.y);
+  api('PATCH', '/nodes/' + d.id, { x: d._sx, y: d._sy }).catch(e => toast(e.message));
+}
+
+// ── Islands: a tab's details open in a floating panel you can drag (title bar) and resize (8 handles) ──
+const islandsEl = $('#islands'), leadersEl = d3.select('#leaders');
+const ISL_KEY = 'netcanvas.islands', MIN_W = 220, MIN_H = 140;
+const HANDLES = ['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw'];
+let islandZ = 10;
+let islandGeo = {};                                       // node id → {x, y, w, h}, remembered per browser
+try { islandGeo = JSON.parse(localStorage.getItem(ISL_KEY)) || {}; } catch { islandGeo = {}; }
+const saveGeo = () => { try { localStorage.setItem(ISL_KEY, JSON.stringify(islandGeo)); } catch { /* storage unavailable */ } };
+const islandOf = id => [...islandsEl.children].find(el => el.dataset.id === id);
+
+function islandHtml(d) {
+  return `<div class="ihead"><span class="bar"></span>
+      <div class="t"><b>${esc(d.label)}</b><small>${esc(d.type)} · ${plural(count(d.metadata), 'field')}</small></div>
+      <button data-act="close" title="Close">×</button></div>
+    <div class="ibody">${metaBlock('node', d)}</div>`;
+}
+
+function clampGeo(g) {
+  const r = islandsEl.getBoundingClientRect();
+  g.w = Math.min(Math.max(g.w, MIN_W), r.width - 8);
+  g.h = Math.min(Math.max(g.h, MIN_H), r.height - 8);
+  g.x = Math.min(Math.max(g.x, 0), r.width - 60);
+  g.y = Math.min(Math.max(g.y, 0), r.height - 40);
+  return g;
+}
+// First-time placement from netcanvas.island.position; several open islands cascade
+function defaultGeo(d) {
+  const c = cfg.island || {}, w = c.width || 340, h = c.height || 420;
+  const r = islandsEl.getBoundingClientRect(), k = islandsEl.children.length, step = 28;
+  let x, y;
+  switch (c.position) {
+    case 'left':   x = 16 + k * step; y = 16 + k * step; break;
+    case 'top':    x = 16 + k * (w + 12); y = 16; break;
+    case 'bottom': x = 16 + k * (w + 12); y = r.height - h - 56; break;
+    case 'near': {
+      const t = d3.zoomTransform(svg.node()), [sx, sy] = t.apply([d.x, d.y]);
+      x = sx + TAB_W / 2 * t.k + 40; y = sy - 40;
+      if (x + w > r.width) x = sx - TAB_W / 2 * t.k - 40 - w;   // no room on the right → open on the left
+      break;
+    }
+    default:       x = r.width - w - 16 - k * step; y = 60 + k * step;   // right, below the zoom buttons
+  }
+  return clampGeo({ x, y, w, h });
+}
+
+function renderIslands() {
+  for (const el of [...islandsEl.children]) {
+    if (!openNodes.has(el.dataset.id) || !nodeById(el.dataset.id)) { openNodes.delete(el.dataset.id); el.remove(); }
+  }
+  for (const id of [...openNodes]) {
+    const d = nodeById(id);
+    if (!d) { openNodes.delete(id); continue; }
+    let el = islandOf(id);
+    if (!el) {
+      el = document.createElement('div');
+      el.className = 'island';
+      el.dataset.id = id;
+      const g = islandGeo[id] ? clampGeo({ ...islandGeo[id] }) : defaultGeo(d);
+      Object.assign(el.style, { left: g.x + 'px', top: g.y + 'px', width: g.w + 'px', height: g.h + 'px', zIndex: ++islandZ });
+      islandsEl.append(el);
+    }
+    el.style.setProperty('--c', color(d.type));
+    el.classList.toggle('sel', selected?.kind === 'node' && selected.id === id);
+    if (keepEditor('node', id, el)) continue;            // don't wipe what's being typed
+    const html = islandHtml(d);
+    if (el._html !== html) {
+      el._html = html;
+      el.innerHTML = html + HANDLES.map(h => `<i class="rh ${h}" data-dir="${h}"></i>`).join('');
+    }
+  }
+  updateLeaders();
+}
+
+// Dashed spline from the tab's facing side to the nearest edge of its island (screen coordinates)
+function updateLeaders() {
+  const on = cfg.island?.leaderLines !== false, t = d3.zoomTransform(svg.node());
+  const data = on ? [...islandsEl.children].map(el => ({ el, d: nodeById(el.dataset.id) })).filter(x => x.d) : [];
+  leadersEl.selectAll('path').data(data, x => x.el.dataset.id).join('path').attr('d', ({ el, d }) => {
+    const x = el.offsetLeft, y = el.offsetTop, w = el.offsetWidth, h = el.offsetHeight;
+    const [cx, cy] = t.apply([d.x, d.y]), side = x + w / 2 >= cx ? 1 : -1;
+    const sx = cx + side * TAB_W / 2 * t.k, ex = side > 0 ? x : x + w;
+    const ey = Math.min(Math.max(cy, y + 20), y + h - 20), c = Math.max(40, Math.abs(ex - sx) / 2);
+    return `M${sx},${cy} C${sx + side * c},${cy} ${ex - side * c},${ey} ${ex},${ey}`;
+  });
+}
+window.addEventListener('resize', () => updateLeaders());
+
+// Drag by the title bar, resize by a handle (opposite edge stays put, like an image in Word)
+islandsEl.addEventListener('pointerdown', e => {
+  const el = e.target.closest('.island');
+  if (!el) return;
+  el.style.zIndex = ++islandZ;
+  const rh = e.target.closest('.rh'), head = e.target.closest('.ihead');
+  if (!rh && (!head || e.target.closest('button'))) return;
+  e.preventDefault();
+  const dir = rh ? rh.dataset.dir : 'move';
+  const st = { px: e.clientX, py: e.clientY, x: el.offsetLeft, y: el.offsetTop, w: el.offsetWidth, h: el.offsetHeight };
+  el.setPointerCapture(e.pointerId);
+  el.classList.add('active');
+  const move = ev => {
+    const dx = ev.clientX - st.px, dy = ev.clientY - st.py;
+    let { x, y, w, h } = st;
+    if (dir === 'move') { x += dx; y += dy; }
+    else {
+      if (dir.includes('e')) w += dx;
+      if (dir.includes('s')) h += dy;
+      if (dir.includes('w')) { w -= dx; x += dx; }
+      if (dir.includes('n')) { h -= dy; y += dy; }
+      if (w < MIN_W) { if (dir.includes('w')) x -= MIN_W - w; w = MIN_W; }
+      if (h < MIN_H) { if (dir.includes('n')) y -= MIN_H - h; h = MIN_H; }
+    }
+    Object.assign(el.style, { left: x + 'px', top: y + 'px', width: w + 'px', height: h + 'px' });
+    updateLeaders();
+  };
+  const up = () => {
+    el.removeEventListener('pointermove', move);
+    el.removeEventListener('pointerup', up);
+    el.classList.remove('active');
+    islandGeo[el.dataset.id] = { x: el.offsetLeft, y: el.offsetTop, w: el.offsetWidth, h: el.offsetHeight };
+    saveGeo();
+  };
+  el.addEventListener('pointermove', move);
+  el.addEventListener('pointerup', up);
+});
+
+islandsEl.addEventListener('click', e => {
+  const el = e.target.closest('.island'), d = el && nodeById(el.dataset.id);
+  if (!d) return;
+  const act = e.target.closest('[data-act]');
+  if (act?.dataset.act === 'close') { openNodes.delete(d.id); return draw(); }
+  if (act) return metaAction(act.dataset.act, 'node', d, el);
+  if (selected?.kind !== 'node' || selected.id !== d.id) { selected = { kind: 'node', id: d.id }; draw(); renderPanel(); }
+});
+
+// ── Side panel: edit the selected node or edge ──
+// Readable form used in the editor: one "key : value" per line (nested values as compact JSON)
+const metaToText = m => Object.entries(m || {}).map(([k, v]) => `${k} : ${fmt(v)}`).join('\n');
+
+// Accepts what people actually type or paste, always returns a JSON object:
+//   {"name":"teo","surname":"kaimasidis"}      ← full JSON
+//   "name":"teo","surname":"kaimasidis"        ← JSON without the braces
+//   name : teo, surname : kaimasidis           ← readable, comma- or newline-separated
+// Values that look like JSON (30, true, null, [1,2], {"a":1}) keep their type; anything else is text.
+function parseMeta(text) {
+  const t = text.trim();
+  if (!t) return {};
+  for (const candidate of [t, `{${t}}`]) {
+    try {
+      const j = JSON.parse(candidate);
+      if (j && typeof j === 'object' && !Array.isArray(j)) return j;
+    } catch { /* not JSON, try the next form */ }
+  }
+  const out = {};
+  for (const part of t.split(/\n|,(?=\s*"?[^",:\n]+"?\s*:)/)) {   // split on newlines, or commas that start a new "key :"
+    if (!part.trim()) continue;
+    const i = part.indexOf(':');
+    if (i < 1) throw new Error(`Expected "key : value", got "${part.trim()}"`);
+    const key = part.slice(0, i).trim().replace(/^"(.*)"$/, '$1');
+    let v = part.slice(i + 1).trim();
+    try { v = JSON.parse(v); } catch { /* plain text */ }
+    out[key] = v;
+  }
+  return out;
+}
+
+async function copyJson(obj) {
+  const text = typeof obj === 'string' ? obj : JSON.stringify(obj ?? {}, null, 2);
+  try { await navigator.clipboard.writeText(text); }
+  catch {                                            // fallback for non-secure contexts
+    const ta = Object.assign(document.createElement('textarea'), { value: text });
+    document.body.append(ta); ta.select(); document.execCommand('copy'); ta.remove();
+  }
+  toast('Copied to clipboard', true);
+}
+
+function metaAction(act, kind, item, el) {
+  if (act === 'copy') return copyJson(item.metadata);
+  if (act === 'copy-msg') return copyJson(item.messages?.[viewIndex(item)]?.data);
+  if (act === 'prev') return stepMessage(item, -1);
+  if (act === 'next') return stepMessage(item, 1);
+  if (act === 'edit') {
+    editing = { kind, id: item.id, text: metaToText(item.metadata) };
+    draw();
+    const ta = el.querySelector('textarea');
+    if (ta) { ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); }
+    return;
+  }
+  if (act === 'cancel') { editing = null; return draw(); }
+  if (act === 'save') {
+    const text = el.querySelector('textarea').value;
+    try {
+      const meta = parseMeta(text);
+      editing = null;
+      run(() => api('PUT', `/${kind}s/${item.id}/metadata`, meta));
+    } catch (err) {
+      editing = { kind, id: item.id, text, error: err.message, force: true };
+      draw();
+    }
+  }
+}
+
+// Grow the edit box (and its foreignObject) as you type
+document.addEventListener('input', e => {
+  const ta = e.target;
+  if (!ta.classList?.contains('meta-edit')) return;
+  ta.rows = Math.max(3, ta.value.split('\n').length + 1);
+  const fo = ta.closest('foreignObject');            // bubbles live in SVG and need resizing; islands just scroll
+  if (fo) fo.setAttribute('height', fo.firstElementChild.firstElementChild.offsetHeight + 2);
+});
+
+function selectedItem() {
+  if (!selected) return null;
+  return selected.kind === 'node' ? nodeById(selected.id) : links.find(l => l.id === selected.id);
+}
+function renderPanel() {
+  const it = selectedItem(), panel = $('#panel');
+  panel.style.display = it ? 'flex' : 'none';
+  if (!it || panel.contains(document.activeElement)) return;   // don't overwrite while typing
+  const isNode = selected.kind === 'node';
+  $('#p-title').textContent = isNode ? 'Selected node' : 'Selected message';
+  $('#p-route').textContent = isNode ? '' : `${it.source.label} → ${it.target.label}`;
+  $('#p-type-wrap').style.display = isNode ? '' : 'none';
+  $('#p-label').value = it.label || '';
+  if (isNode) {
+    $('#p-type').replaceChildren(...cfg.types.map(t => new Option(t.name, t.name, false, t.name === it.type)));
+  }
+}
+$('#panel').addEventListener('change', e => {
+  const f = e.target.dataset.field;
+  if (!f || !selected) return;
+  run(() => api('PATCH', `/${selected.kind}s/${selected.id}`, { [f]: e.target.value }));
+});
+$('#p-delete').onclick = () => selected && run(() => api('DELETE', `/${selected.kind}s/${selected.id}`));
+
+// ── Buttons ──
+$('#btn-expand').onclick = () => { nodes.forEach(n => openNodes.add(n.id)); links.forEach(l => openEdges.add(l.id)); draw(); };
+$('#btn-collapse').onclick = () => { openNodes.clear(); openEdges.clear(); draw(); };
+$('#btn-clear-edges').onclick = () => run(() => api('DELETE', '/edges'));
+// Reset: an empty graph for the next capture (the client's Send starts one; its traffic draws the nodes again)
+$('#btn-reset').onclick = () => run(async () => {
+  await api('DELETE', '/graph');
+  selected = null; editing = null;
+  openNodes.clear(); openEdges.clear(); msgView.clear(); lastSeen.clear();
+  islandGeo = {}; saveGeo();
+  renderPanel();
+});
+$('#btn-relayout').onclick = () => layout(true);
+
+// ── Capture endpoints: the pasted /v3/api-docs, by service port ──
+const ALL = '/**';   // "every request" on a port: added with just its port
+const HTTP_METHODS = ['get', 'post', 'put', 'patch', 'delete', 'head', 'options', 'trace', 'any'];   // any: typed without a method
+const endpointsOf = docs => Object.entries(docs.paths || {})
+  .flatMap(([path, ops]) => Object.keys(ops).filter(m => HTTP_METHODS.includes(m)).map(m => `${m.toUpperCase()} ${path}`));
+async function loadApiDocs() {
+  let all;
+  try { all = await api('GET', '/apidocs'); } catch { return; }
+  const entries = Object.entries(all);
+  $('#docs-list').innerHTML = entries.length ? entries.map(([port, docs]) => {
+    const endpoints = endpointsOf(docs);
+    return `<div class="doc-row" title="${esc(endpoints.join('\n'))}"><b>:${esc(port)}</b>
+      <span>${docs.paths?.[ALL] ? 'every request' : `${esc(docs.info?.title || '')} · ${plural(endpoints.length, 'endpoint')}`}</span>
+      <button data-port="${esc(port)}" title="Remove">×</button></div>`;
+  }).join('') : '<div class="docs-empty">None yet: nothing is drawn until you add a port.</div>';
+}
+// Typed endpoints, one per line (or comma separated): "/orders", "POST /orders", "GET /orders/{id}", or a full URL.
+// Stored like an api-docs, {"paths": {"/orders": {"post": {}}}}, with "any" for no method
+function parseEndpoints(text) {
+  const paths = {};
+  for (const item of text.split(/[\n,]+/).map(s => s.trim()).filter(Boolean)) {
+    const [, method, target] = item.match(/^(?:([A-Za-z]+)\s+)?(\S+)$/) || [];
+    if (!target) throw new Error(`can't read "${item}": write /path or METHOD /path`);
+    if (method && !HTTP_METHODS.includes(method.toLowerCase())) throw new Error(`"${method}" isn't an HTTP method`);
+    let path = target.replace(/^https?:\/\/[^/]+/i, '').split('?')[0];
+    if (!path.startsWith('/')) path = '/' + path;
+    (paths[path] ||= {})[(method || 'any').toLowerCase()] = {};
+  }
+  return { info: { title: 'typed' }, paths };
+}
+
+// springdoc writes the URL it was fetched from in "servers", so the port is usually there
+$('#docs-input').addEventListener('input', () => {
+  try {
+    const url = new URL(JSON.parse($('#docs-input').value).servers[0].url);
+    $('#docs-port').value = url.port || (url.protocol === 'https:' ? '443' : '80');
+  } catch { /* not JSON yet, or no server URL: type the port */ }
+});
+// What "Add" stores for each port, as an api-docs ({"paths": …}), from the box:
+//   empty                      every request on the ports ("/**" with "any" method)
+//   api-docs URLs              fetched by the server; on the URL's own port unless ports are typed
+//   endpoints                  "/orders", "POST /orders", "GET /orders/{id}", "/orders/**": on the typed ports
+//   a pasted api-docs JSON     on the typed ports (filled in from its "servers" URL)
+// URLs and endpoints can be mixed, one per line; everything for a port goes together.
+const isApiDocsUrl = s => /^https?:\/\/\S*api-docs/i.test(s);
+const portOfUrl = s => { const url = new URL(s); return url.port || (url.protocol === 'https:' ? '443' : '80'); };
+$('#docs-add').onclick = async () => {
+  const ports = $('#docs-port').value.split(/[\s,]+/).filter(Boolean);
+  const bad = ports.find(p => !/^\d{1,5}$/.test(p));
+  if (bad) return toast(`Not a port: ${bad}`);
+  const text = $('#docs-input').value.trim();
+  const byPort = new Map();   // port → {titles, paths}
+  const add = (port, docs, title) => {
+    if (!byPort.has(port)) byPort.set(port, { titles: [], paths: {} });
+    const entry = byPort.get(port);
+    let base = '';
+    try { base = new URL(docs.servers?.[0]?.url).pathname.replace(/\/$/, ''); } catch { /* no server URL */ }
+    for (const [path, ops] of Object.entries(docs.paths || {})) Object.assign(entry.paths[base + path] ||= {}, ops);
+    entry.titles.push(title);
+  };
+  const button = $('#docs-add');
+  button.disabled = true;
+  try {
+    if (!text) {
+      if (!ports.length) throw new Error('Type the ports to listen to, e.g. 8085, 8086');
+      ports.forEach(port => add(port, { paths: { [ALL]: { any: {} } } }, 'every request'));
+    } else if (text.startsWith('{')) {
+      let docs;
+      try { docs = JSON.parse(text); } catch (e) { throw new Error(`The api-docs aren't valid JSON: ${e.message}`); }
+      if (!ports.length) throw new Error('Which ports are these api-docs for?');
+      ports.forEach(port => add(port, docs, docs.info?.title || 'pasted'));
+    } else {
+      const items = text.split(/[\n,]+/).map(s => s.trim()).filter(Boolean);
+      const typed = items.filter(item => !isApiDocsUrl(item));
+      if (typed.length && !ports.length) throw new Error(`Which ports is ${typed[0]} on? Type them in the ports field`);
+      for (const url of items.filter(isApiDocsUrl)) {
+        const docs = await api('POST', '/apidocs/fetch', { url });
+        (ports.length ? ports : [portOfUrl(url)]).forEach(port => add(port, docs, url));
+      }
+      if (typed.length) {
+        const docs = parseEndpoints(typed.join('\n'));
+        ports.forEach(port => add(port, docs, 'typed'));
+      }
+    }
+    for (const [port, entry] of byPort) {
+      await api('PUT', '/apidocs/' + port, { info: { title: entry.titles.join(' + ') }, paths: entry.paths });
+    }
+    $('#docs-input').value = ''; $('#docs-port').value = '';
+    toast([...byPort].map(([port, entry]) => `:${port} ${entry.paths[ALL] ? 'every request'
+        : plural(endpointsOf(entry).length, 'endpoint')}`).join(' · '), true);
+  } catch (e) {
+    toast(e.message);
+  } finally {
+    button.disabled = false;
+  }
+  loadApiDocs();
+};
+$('#docs-list').addEventListener('click', async e => {
+  const port = e.target.closest('button[data-port]')?.dataset.port;
+  if (!port) return;
+  try { await api('DELETE', '/apidocs/' + encodeURIComponent(port)); } catch (err) { toast(err.message); }
+  loadApiDocs();
+});
+for (const key of ['charge', 'distance', 'collide']) {
+  $('#s-' + key).oninput = e => { cfg.physics[key] = +e.target.value; $('#v-' + key).textContent = e.target.value; };
+  $('#s-' + key).onchange = () => layout(true);
+}
+
+$('#z-in').onclick = () => svg.transition().duration(300).call(zoom.scaleBy, 1.3);
+$('#z-out').onclick = () => svg.transition().duration(300).call(zoom.scaleBy, 1 / 1.3);
+$('#z-fit').onclick = fit;
+function fit() {
+  const { w, h } = size();
+  if (!nodes.length) return svg.transition().duration(400).call(zoom.transform, d3.zoomIdentity);
+  const x0 = d3.min(nodes, n => n.x) - TAB_W, x1 = d3.max(nodes, n => n.x) + TAB_W;
+  const y0 = d3.min(nodes, n => n.y) - 2 * HEAD_H, y1 = d3.max(nodes, n => n.y) + 3 * HEAD_H;
+  const k = Math.min(1.5, w / (x1 - x0), h / (y1 - y0));
+  svg.transition().duration(400).call(zoom.transform, d3.zoomIdentity.translate(w / 2 - k * (x0 + x1) / 2, h / 2 - k * (y0 + y1) / 2).scale(k));
+}
+function viewCenter() {
+  const { w, h } = size(), [x, y] = d3.zoomTransform(svg.node()).invert([w / 2, h / 2]);
+  return { x, y };
+}
+
+window.addEventListener('keydown', e => {
+  const ta = document.activeElement;
+  if (ta?.classList?.contains('meta-edit')) {
+    const box = ta.closest('.island, .msg');
+    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); box.querySelector('[data-act="save"]').click(); }
+    if (e.key === 'Escape') box.querySelector('[data-act="cancel"]').click();
+    return;
+  }
+  if (/INPUT|SELECT|TEXTAREA/.test(document.activeElement.tagName)) return;
+  if (e.key === 'Escape') { selected = null; draw(); renderPanel(); }
+  if ((e.key === 'ArrowLeft' || e.key === 'ArrowRight') && selected?.kind === 'edge' && openEdges.has(selected.id)) {
+    const l = links.find(x => x.id === selected.id);
+    if (l) { e.preventDefault(); stepMessage(l, e.key === 'ArrowLeft' ? -1 : 1); }
+  }
+  if ((e.key === 'Delete' || e.key === 'Backspace') && selected) run(() => api('DELETE', `/${selected.kind}s/${selected.id}`));
+});
+
+function setStatus(ok) { $('#status').textContent = ok ? '● live' : '○ offline'; $('#status').classList.toggle('off', !ok); }
+function toast(msg, ok = false) {
+  const t = $('#toast');
+  t.textContent = msg; t.style.display = 'block';
+  t.style.borderColor = ok ? '#34d39955' : '#f43f5e55';
+  clearTimeout(toast.timer); toast.timer = setTimeout(() => (t.style.display = 'none'), 2500);
+}
+
+// ── Start ──
+(async () => {
+  try { cfg = await api('GET', '/config'); } catch { /* keep defaults */ }
+  document.title = $('#title').textContent = cfg.title;
+  cfg.types.forEach(t => {
+    const b = document.createElement('button');
+    b.className = 'btn chip';
+    const dot = document.createElement('i'); dot.style.background = t.color;
+    b.append(dot, '+ ' + t.name);
+    b.onclick = () => run(() => api('POST', '/nodes', { type: t.name }));   // no x/y → placed by the layout
+    $('#chips').append(b);
+  });
+  for (const key of ['charge', 'distance', 'collide']) { $('#s-' + key).value = cfg.physics[key]; $('#v-' + key).textContent = cfg.physics[key]; }
+  $('#hint').textContent = 'Hold & drag to move · drag ● to ● to connect · click to expand';
+  await load();
+  setInterval(load, cfg.pollMs);
+  loadApiDocs();
+})();
+</script>
+</body>
+</html>

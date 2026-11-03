@@ -1,0 +1,9 @@
+{
+  "uris": [],
+  "methods": [],
+  "srcPorts": [],
+  "interfaces": [],
+  "services": {},
+  "webPort": 8000,
+  "graphUrl": "http://localhost:29994/api"
+}

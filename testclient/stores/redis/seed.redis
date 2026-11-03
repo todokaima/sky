@@ -1,0 +1,10 @@
+SET stock:Coffee 120
+SET stock:Tea 15
+SET stock:Cake 8
+HSET product:Coffee price 3.50 prep 2 supplier "Bean & Co"
+HSET product:Tea price 2.20 prep 1 supplier "Leaf Ltd"
+HSET product:Cake price 4.80 prep 3 supplier "Sweet Bakery"
+RPUSH orders:recent seed-1 seed-2 seed-3
+SADD tags:Coffee hot morning strong
+SET orders:count 3
+SET feature:discounts on EX 86400

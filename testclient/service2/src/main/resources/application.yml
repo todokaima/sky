@@ -1,0 +1,58 @@
+spring:
+  application:
+    name: service2
+  # Defaults are the compose stack's host ports, so it also runs from the IDE
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:2346/testdb2}
+    username: teo
+    password: kaima
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP:localhost:9092}
+    consumer:
+      group-id: service2
+      auto-offset-reset: latest
+  # For the calls to service1
+  http:
+    client:
+      connect-timeout: 2s
+      read-timeout: 5s
+
+# service1, the shop
+shop:
+  url: ${SHOP_URL:http://localhost:8085}
+
+server:
+  port: ${PORT:8086}
+
+logging:
+  level:
+    org.apache.kafka: warn
+
+# The debug endpoints (/actuator/...). It's a test app, so all of them, with the values unmasked
+management:
+  endpoints:
+    web:
+      exposure:
+        include: "*"
+        exclude: heapdump
+  endpoint:
+    health:
+      show-details: always
+    env:
+      show-values: always
+    configprops:
+      show-values: always
+  info:
+    env:
+      enabled: true
+    java:
+      enabled: true
+    os:
+      enabled: true
+    process:
+      enabled: true
+
+info:
+  app:
+    name: service2
+    description: the kitchen - tickets and recipes in kitchen.*, sends kitchen.events, reads orders.events, calls service1's /orders and /products

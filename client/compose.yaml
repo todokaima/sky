@@ -1,0 +1,18 @@
+services:
+  client:
+    build: .
+    image: todokaima/client:latest
+    # Host network: the page is on localhost:$PORT and "localhost" in the cards and configs (the services on 8085,
+    # the test db on 2345, Kafka on 9092, scapy-minimal on 8000) means the host, same as when run from the IDE.
+    # So no "ports:" here: it listens on the host's 29993 directly. Kafka in particular advertises localhost:9092,
+    # which a port-forwarded (bridge) container couldn't reach.
+    network_mode: host
+    environment:
+      PORT: 29993
+    volumes:
+      - client-data:/data
+      # Lets the app start the python / psql containers on the host's docker
+      - /var/run/docker.sock:/var/run/docker.sock
+
+volumes:
+  client-data:

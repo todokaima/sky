@@ -1,0 +1,16 @@
+spring:
+  application:
+    name: client
+
+server:
+  port: ${PORT:29993}
+
+client:
+  data-dir: ${DATA_DIR:.}
+  # Send starts a capture in scapy-minimal (../scapy-minimal) before the chain runs; "none": don't
+  capture-url: ${CAPTURE_URL:http://localhost:8000/api/capture}
+
+# The Kafka client logs its whole config on every connect
+logging:
+  level:
+    org.apache.kafka: warn

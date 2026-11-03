@@ -1,0 +1,2226 @@
+<!doctype html>
+<html xmlns:th="http://www.thymeleaf.org" spellcheck="false">
+<head>
+    <meta charset="utf-8">
+    <title th:text="${sessionName != null ? sessionName + ' · Client' : 'Client'}">Client</title>
+    <style>
+        :root {
+            --bg: #17181c;
+            --panel: #212329;
+            --editor: #191a1f;
+            --border: #33363f;
+            --text: #d8dae0;
+            --muted: #8b8f9a;
+
+            --blue: #4fa8ff;     /* queries, datasource */
+            --purple: #c084fc;   /* http */
+            --yellow: #e5c07b;   /* python */
+            --green: #4ec9a0;    /* run, output */
+            --red: #f07178;      /* remove, false */
+            --orange: #f78c6c;   /* if diamonds */
+            --teal: #56b6c2;     /* kafka */
+            --python-bg: #1f1d17;
+        }
+        * { box-sizing: border-box; }
+
+        /* Dark scrollbars, only shown where something actually overflows */
+        :root { color-scheme: dark; }
+        * { scrollbar-width: thin; scrollbar-color: #3a3e4a transparent; }
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar-track, ::-webkit-scrollbar-corner { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #3a3e4a; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #4d5262; }
+        html { scroll-behavior: smooth; }
+        body {
+            margin: 0; height: 100vh; overflow: hidden;
+            /* Matte night: a vignette and fine grain over two soft glows; the board's star dots sit on it */
+            background-color: #0d0b12;
+            background-image:
+                radial-gradient(ellipse 120% 90% at 50% 45%, transparent 55%, #00000099 100%),
+                url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 .08 0 0 0 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E"),
+                radial-gradient(ellipse 1200px 600px at 0% 0%, #1d1830 0%, transparent 65%),
+                radial-gradient(ellipse 900px 700px at 100% 100%, #10182a 0%, transparent 70%);
+            background-size: 100% 100%, 180px 180px, 100% 100%, 100% 100%;
+            background-attachment: fixed;
+            color: var(--text); font-family: system-ui, sans-serif; font-size: 14px;
+        }
+        h1 {
+            margin: 0 0 14px; font-size: 22px; font-weight: 700; letter-spacing: 0.02em;
+            background: linear-gradient(90deg, var(--blue), var(--purple));
+            -webkit-background-clip: text; background-clip: text; color: transparent;
+            width: fit-content;
+        }
+        /* The board: a big dotted surface you pan and zoom; the viewport is the whole window */
+        #viewport { position: fixed; inset: 0; overflow: hidden; }
+        #viewport.grab { cursor: grab; }
+        #viewport.panning, #viewport.panning * { cursor: grabbing !important; user-select: none; }
+        #board {
+            position: absolute; top: 0; left: 0; transform-origin: 0 0;
+            /* See-through, so the matte grain shows; scattered star dots over the 24px dot grid cards align to */
+            background-color: #15131b99; border: 1px dashed #2c2f39; border-radius: 12px;
+            background-image:
+                radial-gradient(circle at 17% 23%, #ffffffa0 0 1px, transparent 1.6px),
+                radial-gradient(circle at 63% 71%, #d9ccff70 0 1.2px, transparent 2px),
+                radial-gradient(circle at 81% 12%, #ffffff55 0 .8px, transparent 1.4px),
+                radial-gradient(circle at 38% 88%, #ffe9c960 0 1px, transparent 1.8px),
+                radial-gradient(#2a2d37 1px, transparent 1px);
+            background-size: 173px 157px, 241px 223px, 97px 109px, 311px 293px, 24px 24px;
+        }
+        #board .node { position: absolute; margin: 0; }
+        /* Only while converting a layout from before the board: cards in the page flow, as they used to be */
+        #board.flow #blocks { padding: 64px 16px 16px; }
+        #board.flow .node { position: relative; width: 50%; margin-bottom: 16px; }
+        :root { --aside-w: 412px; }
+        .top { position: fixed; top: 12px; left: 16px; z-index: 30; }
+        .zoom {
+            position: fixed; bottom: 14px; left: calc((100% - var(--aside-w)) / 2); transform: translateX(-50%); z-index: 30;
+            display: flex; gap: 2px; padding: 3px; border-radius: 10px;
+            background: color-mix(in srgb, var(--panel) 85%, transparent); border: 1px solid var(--border);
+            box-shadow: 0 4px 14px rgba(0, 0, 0, 0.45); backdrop-filter: blur(6px);
+        }
+        body.aside-closed .zoom { left: 50%; }
+        .zoom button { --c: var(--muted); padding: 3px 10px; border: none; background: transparent; }
+        .zoom button:hover { background: color-mix(in srgb, var(--c) 20%, transparent); }
+        .zoom .level { min-width: 58px; font-variant-numeric: tabular-nums; }
+        /* Top right: which kinds of config the side panel shows; with none ticked it slides away */
+        .config-bar { position: fixed; top: 12px; right: 16px; z-index: 30; display: flex; align-items: center; gap: 8px; }
+        .config-kinds {
+            display: flex; gap: 14px; padding: 4px 10px; border-radius: 6px;
+            background: color-mix(in srgb, var(--panel) 85%, transparent); border: 1px solid var(--border);
+            box-shadow: 0 4px 14px rgba(0, 0, 0, 0.45); backdrop-filter: blur(6px);
+        }
+        .config-kinds label { gap: 6px; margin: 0; font-size: 12px; font-weight: 600; color: var(--muted); cursor: pointer; }
+        .config-kinds label:has(input:checked) { color: var(--accent); }
+        .config-kinds .http { --accent: var(--purple); }
+        .config-kinds .db { --accent: var(--blue); }
+        .config-kinds .kafka { --accent: var(--teal); }
+
+        textarea, input, select {
+            background: var(--editor); color: var(--text);
+            border: 1px solid var(--border); border-radius: 0;
+            font-family: ui-monospace, Consolas, monospace; font-size: 13px; padding: 8px;
+            transition: box-shadow 0.15s, border-color 0.15s;
+        }
+        textarea:focus, input:focus, select:focus {
+            outline: none; border-color: var(--focus, var(--blue));
+            box-shadow: 0 0 0 2px color-mix(in srgb, var(--focus, var(--blue)) 25%, transparent);
+        }
+        textarea { display: block; width: 100%; margin: 0; resize: vertical; }
+
+        /* Dark dropdowns: our own arrow instead of the browser's light control, dark option list */
+        select {
+            appearance: none; -webkit-appearance: none; cursor: pointer; padding-right: 28px;
+            background-color: var(--editor);
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%238b8f9a'/%3E%3C/svg%3E");
+            background-repeat: no-repeat; background-position: right 10px center;
+        }
+        select:hover { border-color: var(--focus, var(--blue)); }
+        select option { background: var(--panel); color: var(--text); }
+        ::placeholder { color: #565a66; }
+
+        button {
+            --c: var(--blue);
+            background: color-mix(in srgb, var(--c) 18%, transparent); color: var(--c);
+            border: 1px solid color-mix(in srgb, var(--c) 45%, transparent); border-radius: 6px;
+            padding: 6px 16px; font-size: 13px; font-weight: 600; cursor: pointer;
+            transition: background 0.15s, transform 0.05s;
+        }
+        button:hover { background: color-mix(in srgb, var(--c) 30%, transparent); }
+        button:active { transform: translateY(1px); }
+        button:disabled { --c: #555a66; cursor: default; opacity: 0.6; transform: none; }
+
+        /* Islands: the HTTP bar and each python + query block, each with its own accent */
+        .island {
+            --accent: var(--blue);
+            background: color-mix(in srgb, var(--panel) 92%, transparent); border: 1px solid var(--border); border-left: 2px solid var(--accent);
+            border-radius: 10px; padding: 14px; margin-bottom: 16px; backdrop-filter: blur(3px);
+            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+        }
+        .island { display: flex; flex-direction: column; }
+        .island .out { flex: 1 1 auto; min-height: 80px; }
+        .node { padding-top: 30px; padding-bottom: 32px; }
+
+        /* Drag by the title, resize from the bottom-right corner */
+        .movable { position: relative; resize: both; overflow: auto; min-width: 280px; min-height: 90px; }
+        .movable.dragging { z-index: 10; box-shadow: 0 12px 32px rgba(0, 0, 0, 0.55); }
+        .handle { cursor: grab; user-select: none; }
+        .movable.dragging .handle { cursor: grabbing; }
+
+        /* Connection ports: in at the top, out at the bottom of every card, in the card's colour */
+        .port {
+            position: absolute; left: 50%; width: 18px; height: 18px; margin-left: -9px; z-index: 3;
+            border-radius: 50%; border: 2px solid var(--accent);
+            background: color-mix(in srgb, var(--accent) 20%, var(--panel));
+            cursor: crosshair; transition: transform 0.1s, background 0.1s;
+        }
+        /* invisible larger hit area around the circle */
+        .port::after { content: ""; position: absolute; inset: -5px; border-radius: 50%; }
+        .port-in { top: 6px; cursor: pointer; }
+        .port-out { bottom: 6px; }
+        .port:hover { transform: scale(1.25); background: color-mix(in srgb, var(--accent) 45%, var(--panel)); }
+        .port.linked { background: var(--accent); box-shadow: 0 0 6px var(--accent); }
+        .node.drop-target { box-shadow: 0 0 0 2px var(--accent), 0 4px 16px rgba(0, 0, 0, 0.35); }
+
+        /* Config links: a square on HTTP cards -> HTTP configs, a triangle on query cards -> DB configs */
+        .cfg-port {
+            position: absolute; width: 14px; height: 14px; z-index: 3; cursor: crosshair;
+            transition: transform 0.1s, background 0.1s;
+        }
+        .node .cfg-port { top: 9px; right: 12px; }
+        .config .cfg-port { position: relative; display: inline-block; vertical-align: -2px; margin-right: 8px; cursor: default; }
+        .cfg-port.square {
+            --c: var(--purple); border: 2px solid var(--c); border-radius: 3px;
+            background: color-mix(in srgb, var(--c) 20%, var(--panel));
+        }
+        .cfg-port.circle {
+            --c: var(--teal); border: 2px solid var(--c); border-radius: 50%;
+            background: color-mix(in srgb, var(--c) 20%, var(--panel));
+        }
+        .cfg-port.triangle { --c: var(--blue); background: color-mix(in srgb, var(--c) 45%, var(--panel)); clip-path: polygon(0 0, 100% 50%, 0 100%); }
+        .node .cfg-port:hover { transform: scale(1.25); }
+        .cfg-port.linked { background: var(--c); }
+        .config.drop-target { box-shadow: 0 0 0 2px var(--accent), 0 4px 16px rgba(0, 0, 0, 0.35); }
+
+        /* Alignment guides shown while dragging */
+        .guide { position: fixed; z-index: 20; pointer-events: none; display: none; }
+        .guide-x { top: 0; bottom: 0; width: 0; border-left: 1px dashed var(--purple); }
+        .guide-y { left: 0; right: 0; height: 0; border-top: 1px dashed var(--purple); }
+        .guide.show { display: block; }
+
+        /* 1x1 layer whose lines draw outside it, so it never changes the page size or scrollbars */
+        .wire-layer { position: absolute; top: 0; left: 0; width: 1px; height: 1px; pointer-events: none; overflow: visible; }
+        /* Saved links sit behind the cards; only the line being dragged is drawn on top */
+        #wires { z-index: 4; }
+        #wires-back { z-index: 0; }
+        .wire-layer path { fill: none; stroke: var(--blue); stroke-width: 2; opacity: 0.85; }
+        .wire-layer path.hit { stroke: transparent; stroke-width: 14; pointer-events: stroke; cursor: pointer; }
+        .wire-layer path.hit:hover + path { stroke-width: 3.5; opacity: 1; }
+        .wire-layer path.from-http { stroke: var(--purple); }
+        .wire-layer path.from-kafka { stroke: var(--teal); }
+        .wire-layer path.from-yes { stroke: var(--green); }
+        .wire-layer path.from-no { stroke: var(--red); }
+        /* A link with a condition: dashed, with the condition written on it */
+        .wire-layer path.when { stroke-dasharray: 8 4; }
+        .wire-layer path.temp { stroke-dasharray: 6 4; }
+        .wire-layer path.cfg { stroke-dasharray: 2 5; stroke-width: 1; opacity: 0.35; }
+        .wire-layer path.cfg.http { stroke: var(--purple); }
+        .wire-layer path.cfg.kafka { stroke: var(--teal); }
+        .wire-layer path.hit:hover + path.cfg { opacity: 0.8; stroke-width: 1.5; }
+
+        /* Conditions on links: a label at the middle of the line, click it (or the line) to edit */
+        #wire-labels { position: absolute; top: 0; left: 0; width: 0; height: 0; z-index: 0; }
+        .wire-label {
+            position: absolute; transform: translate(-50%, -50%); max-width: 220px; padding: 2px 8px;
+            overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer;
+            font: 11px ui-monospace, Consolas, monospace; color: var(--c, var(--blue));
+            background: var(--panel); border: 1px solid color-mix(in srgb, var(--c, var(--blue)) 50%, transparent); border-radius: 10px;
+        }
+        .wire-label:hover { border-color: var(--c, var(--blue)); }
+        .wire-edit {
+            position: fixed; z-index: 40; display: flex; align-items: center; gap: 6px; padding: 8px;
+            background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+        }
+        .wire-edit span { color: var(--muted); font-size: 12px; }
+        .wire-edit input { width: 260px; border-radius: 6px; padding: 5px 7px; }
+        .wire-edit select { border-radius: 6px; padding: 4px 6px; }
+        .wire-edit button { --c: var(--red); padding: 4px 10px; font-size: 12px; }
+
+        /* If diamonds: the diamond is the drag handle, true (green) / false (red) ports on its sides */
+        .decision-card { --accent: var(--orange); --focus: var(--orange); }
+        .decision-card .diamond { position: relative; width: 92px; height: 92px; margin: -8px auto 6px; display: grid; place-items: center; }
+        .decision-card .diamond::before {
+            content: ""; position: absolute; inset: 14px; transform: rotate(45deg); border-radius: 6px;
+            border: 2px solid var(--accent); background: color-mix(in srgb, var(--accent) 14%, var(--panel));
+        }
+        .decision-card .diamond h2 { position: relative; margin: 0; }
+        .port-yes, .port-no { top: 59px; bottom: auto; }
+        .port-yes { --accent: var(--green); left: calc(50% - 45px); }
+        .port-no { --accent: var(--red); left: calc(50% + 45px); }
+        .check { display: flex; flex-direction: column; gap: 6px; }
+        .check select { align-self: flex-start; border-radius: 6px; padding-top: 4px; padding-bottom: 4px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; }
+        .check textarea { border-radius: 6px; }
+        .check.python select { color: var(--yellow); }
+        .check.python textarea { --focus: var(--yellow); background: var(--python-bg); color: #e8dcc0; }
+        .top { display: flex; align-items: center; gap: 14px; }
+        .top h1 { margin: 0; }
+        /* New card buttons next to the title, each in its card's colour */
+        .spawn { padding: 4px 12px; }
+        .spawn.http { --c: var(--purple); }
+        .spawn.query { --c: var(--blue); }
+        .spawn.if { --c: var(--orange); }
+        .spawn.kafka { --c: var(--teal); }
+        .spawn.mysql, .db-presets .mysql, .db-presets .mariadb, .spawn.mariadb { --c: #f0a35e; }
+        .spawn.mongodb, .db-presets .mongodb { --c: #5fbf5a; }
+        .spawn.redis, .db-presets .redis { --c: #ef6a5f; }
+        .db-presets .postgres { --c: var(--blue); }
+        .db-presets { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 8px 10px; border-radius: 10px;
+                      background: var(--panel); border: 1px solid var(--border); }
+        .db-presets span { color: var(--muted); font-size: 12px; margin-right: 2px; }
+        .db-presets button { padding: 3px 10px; font-size: 12px; }
+        /* A DB config takes its store's colour too */
+        aside details.config[data-db="mysql"] { --accent: #f0a35e; --focus: #f0a35e; }
+        aside details.config[data-db="mongodb"] { --accent: #5fbf5a; --focus: #5fbf5a; }
+        aside details.config[data-db="redis"] { --accent: #ef6a5f; --focus: #ef6a5f; }
+
+        .island h2 {
+            margin: 0 0 10px; font-size: 12px; font-weight: 700; color: var(--accent);
+            text-transform: uppercase; letter-spacing: 0.08em;
+        }
+        /* Each card's icon in front of its title: a chip tinted with the card's colour */
+        .island[data-kind] > h2, .decision-card .diamond h2 { display: flex; align-items: center; gap: 8px; }
+        .island[data-kind] > h2::before {
+            content: ""; flex: none; width: 22px; height: 22px; border-radius: 7px;
+            background: color-mix(in srgb, var(--accent) 16%, transparent) var(--icon) center / 13px no-repeat;
+            border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
+            box-shadow: 0 0 10px color-mix(in srgb, var(--accent) 20%, transparent);
+        }
+        .island[data-kind] > h2::after {
+            content: ""; position: absolute; left: 0; top: 50%; transform: translateY(-50%); width: 24px; height: 24px; background: var(--accent);
+            -webkit-mask: var(--icon-mask) center / 13px no-repeat; mask: var(--icon-mask) center / 13px no-repeat;
+        }
+        .island[data-kind] > h2 { position: relative; --icon: none; }
+        .island[data-kind="http"] { --icon-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='8.5'/%3E%3Cpath d='M3.5 12h17M12 3.5c2.6 2.6 2.6 14.4 0 17M12 3.5c-2.6 2.6-2.6 14.4 0 17'/%3E%3C/svg%3E"); }
+        /* A query card takes its look from its DB config's type (data-db, set by updateDbBadges): colour, icon, badge */
+        .island[data-kind="query"][data-db="mysql"] { --accent: #f0a35e; --focus: #f0a35e; --icon-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='3.5' y='4' width='17' height='16' rx='2'/%3E%3Cpath d='M3.5 9.5h17M3.5 15h17M9.5 9.5V20'/%3E%3C/svg%3E"); }
+        .island[data-kind="query"][data-db="mongodb"] { --accent: #5fbf5a; --focus: #5fbf5a; --icon-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 2.5c3.5 3.2 5.5 6.8 5.5 10.2 0 3.6-2.4 6.5-5.5 7.8-3.1-1.3-5.5-4.2-5.5-7.8 0-3.4 2-7 5.5-10.2z'/%3E%3Cpath d='M12 6v15.5'/%3E%3C/svg%3E"); }
+        .island[data-kind="query"][data-db="redis"] { --accent: #ef6a5f; --focus: #ef6a5f; --icon-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 3.5l8.5 4-8.5 4-8.5-4z'/%3E%3Cpath d='M3.5 12l8.5 4 8.5-4M3.5 16.5l8.5 4 8.5-4'/%3E%3C/svg%3E"); }
+        .island[data-kind="query"][data-db] button { --c: var(--accent); }
+        .db-badge {
+            position: absolute; top: 7px; right: 34px; z-index: 2; max-width: 55%; overflow: hidden; text-overflow: ellipsis;
+            white-space: nowrap; padding: 0 8px; border-radius: 99px; font: 600 10px/17px system-ui, sans-serif;
+            letter-spacing: 0.05em; color: var(--accent); pointer-events: none;
+            background: color-mix(in srgb, var(--accent) 14%, transparent); border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
+        }
+        .island[data-kind="query"] { --icon-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cellipse cx='12' cy='5.5' rx='7.5' ry='2.8'/%3E%3Cpath d='M4.5 5.5v13c0 1.5 3.4 2.8 7.5 2.8s7.5-1.3 7.5-2.8v-13M4.5 12c0 1.5 3.4 2.8 7.5 2.8s7.5-1.3 7.5-2.8'/%3E%3C/svg%3E"); }
+        .island[data-kind="kafka"] { --icon-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='2.2'/%3E%3Ccircle cx='12' cy='4' r='1.8'/%3E%3Ccircle cx='12' cy='20' r='1.8'/%3E%3Ccircle cx='19' cy='8' r='1.8'/%3E%3Ccircle cx='19' cy='16' r='1.8'/%3E%3Cpath d='M12 5.8v4M12 14.2v4M13.9 10.9l3.3-1.9M13.9 13.1l3.3 1.9'/%3E%3C/svg%3E"); }
+        .decision-card .diamond h2::before {
+            content: ""; width: 11px; height: 11px; flex: none; background: var(--accent, var(--orange));
+            -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='6' cy='5' r='2'/%3E%3Ccircle cx='6' cy='19' r='2'/%3E%3Ccircle cx='18' cy='7' r='2'/%3E%3Cpath d='M6 7v10M18 9c0 5-6 4-11.5 8.5'/%3E%3C/svg%3E") center / contain no-repeat; mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='6' cy='5' r='2'/%3E%3Ccircle cx='6' cy='19' r='2'/%3E%3Ccircle cx='18' cy='7' r='2'/%3E%3Cpath d='M6 7v10M18 9c0 5-6 4-11.5 8.5'/%3E%3C/svg%3E") center / contain no-repeat;
+        }
+        .island .out { margin-top: 10px; color: var(--green); background: #15171b; border-radius: 6px; }
+        .http-card { --accent: var(--purple); --focus: var(--purple); }
+        .http-card button { --c: var(--purple); }
+        .http-card textarea:not(.out) { border-radius: 6px; resize: vertical; }
+        .http-card textarea:not(.out) { cursor: ns-resize; }
+        .http-card textarea:not(.out):focus { cursor: text; }
+        .http-card select, .http-card input { border-radius: 6px; }
+        .kafka-card { --accent: var(--teal); --focus: var(--teal); }
+        .kafka-card button { --c: var(--teal); }
+        .kafka-card select, .kafka-card input { border-radius: 6px; }
+        .kafka-card .out.meta, .kafka-card .out.script-out { flex: none; min-height: 0; }
+        .kafka-card .out.meta { color: var(--muted); }
+        .kafka-card .io { margin-top: 10px; }
+        .consume-opts { display: flex; align-items: center; gap: 12px; margin-top: 8px; }
+        .consume-opts select { padding-top: 5px; padding-bottom: 5px; }
+        .consume-opts label { margin: 0; }
+        .consume-opts label span { width: auto; margin-right: 8px; }
+        .consume-opts input { width: 80px; flex: none; color-scheme: dark; }
+        .py-bar .run-script {
+            --c: var(--green); border: none; border-radius: 0; padding: 0 14px;
+            font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em;
+        }
+
+        .request { display: flex; gap: 8px; }
+        .request input { flex: 1; min-width: 0; }
+        .request + textarea { margin-top: 8px; }
+        .response-toggle { margin-top: 8px; }
+        .response-toggle summary { cursor: pointer; color: var(--muted); font-size: 12px; }
+        .extractor { margin-top: 8px; }
+        .extractor label { color: var(--yellow); font-size: 12px; }
+        .extractor input { flex: 1; min-width: 0; }
+        .extractor button { --c: var(--yellow); }
+
+        .io { border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+        .io textarea { border: none; }
+        .io textarea:focus { box-shadow: inset 0 0 0 1px var(--focus, var(--blue)); }
+        .io .py { --focus: var(--yellow); background: var(--python-bg); color: #e8dcc0; border-bottom: 1px solid var(--border); }
+        .py-bar { display: flex; background: var(--python-bg); border-bottom: 1px solid var(--border); }
+        .py-toggle {
+            flex: 1; text-align: left; border: none; border-radius: 0;
+            background: var(--python-bg); color: var(--yellow); padding: 5px 10px; font-size: 11px;
+            text-transform: uppercase; letter-spacing: 0.08em;
+        }
+        .py-bar select {
+            width: auto; border: none; border-radius: 0; background-color: transparent; color: var(--yellow);
+            font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; padding: 0 26px 0 10px;
+        }
+        .py-bar select:hover, .py-bar select:focus { background-color: #29261c; }
+        .py-toggle:hover { background: #29261c; }
+        .py-toggle:active { transform: none; }
+        .py-toggle::before { content: "\25BE  "; }
+        .io.py-hidden .py-toggle::before { content: "\25B8  "; }
+        .io.py-hidden .py { display: none; }
+
+        .actions { margin-top: 10px; display: flex; align-items: center; gap: 16px; }
+        .actions button[name="run"] { --c: var(--green); }
+        .actions .schema { margin: 0; }
+        .actions .schema span { width: auto; margin-right: 8px; }
+        .actions .schema input { width: 200px; flex: none; border-radius: 6px; }
+
+        /* Small +/- on each card (bottom-left) and each config panel (title bar) */
+        .mini { display: flex; gap: 4px; }
+        .node > .mini { position: absolute; left: 12px; bottom: 7px; z-index: 3; }
+        .config summary .mini { float: right; }
+        .mini button {
+            --c: var(--accent); width: 22px; height: 22px; padding: 0; border-radius: 5px;
+            font-size: 15px; font-weight: 600; line-height: 1; opacity: 0.7;
+        }
+        .mini button:hover:not(:disabled) { opacity: 1; }
+        .mini button.remove { --c: var(--red); }
+        .mini button:disabled { opacity: 0.25; }
+
+        /* Side panel: fixed on the right, over the board, and can slide away */
+        aside {
+            position: fixed; top: 0; right: 0; bottom: 0; width: var(--aside-w); z-index: 20; overflow-y: auto;
+            padding: 48px 16px 64px; display: flex; flex-direction: column; gap: 12px;
+            transition: transform 0.25s ease; pointer-events: none;
+        }
+        aside > * { pointer-events: auto; }
+        body.aside-closed aside { transform: translateX(100%); }
+        aside details {
+            --accent: var(--blue);
+            background: var(--panel); border: 1px solid var(--border); border-top: 2px solid var(--accent);
+            border-radius: 10px; padding: 10px 12px; box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+        }
+        aside details.http, #http-configs { --accent: var(--purple); --focus: var(--purple); }
+        #http-configs button { --c: var(--purple); }
+        #http-configs .mini .remove { --c: var(--red); }
+        aside details.kafka, #kafka-configs { --accent: var(--teal); --focus: var(--teal); }
+        #kafka-configs button { --c: var(--teal); }
+        #kafka-configs .mini .remove { --c: var(--red); }
+        .config-list[hidden], .pins [hidden] { display: none; }
+        .config-list { display: flex; flex-direction: column; gap: 12px; }
+        label.default { gap: 6px; color: var(--muted); font-size: 12px; margin: 8px 0 0; cursor: pointer; }
+        /* Dark checkbox, drawn by us instead of the browser's white one */
+        label.default input, .config-kinds input {
+            appearance: none; -webkit-appearance: none; flex: none; margin: 0; padding: 0;
+            width: 14px; height: 14px; border: 1px solid var(--border); border-radius: 3px;
+            background: var(--editor); cursor: pointer; display: grid; place-content: center;
+        }
+        label.default input:hover, .config-kinds input:hover { border-color: var(--accent); }
+        label.default input:checked, .config-kinds input:checked { background: color-mix(in srgb, var(--accent) 25%, var(--editor)); border-color: var(--accent); }
+        label.default input:checked::before, .config-kinds input:checked::before {
+            content: ""; width: 7px; height: 4px; margin-top: -2px;
+            border-left: 2px solid var(--accent); border-bottom: 2px solid var(--accent); transform: rotate(-45deg);
+        }
+        .config-list.single label.default { display: none; }
+        aside summary { cursor: pointer; font-weight: 700; color: var(--accent); }
+        aside textarea { margin-top: 8px; border-radius: 6px; }
+        fieldset { margin: 8px 0 8px 8px; border: 1px solid var(--border); border-radius: 6px; }
+        legend { color: var(--accent); font-size: 12px; padding: 0 4px; }
+        label { display: flex; align-items: center; margin: 4px 0; }
+        label span { width: 130px; flex-shrink: 0; color: var(--muted); }
+        label select.db-type { flex: 1; min-width: 0; padding: 5px 7px; border-radius: 4px; }
+        label input { flex: 1; min-width: 0; padding: 5px 7px; border-radius: 4px; }
+
+        /* Pinned save buttons: small icons in the bottom corners, the label slides out on hover */
+        .pins { position: fixed; bottom: 14px; z-index: 30; display: flex; gap: 8px; }
+        .pins.left { left: 14px; }
+        .pins.right { right: 14px; }
+        .pin {
+            display: flex; align-items: center; height: 34px; max-width: 34px; padding: 0 9px;
+            overflow: hidden; white-space: nowrap; border-radius: 17px;
+            background: color-mix(in srgb, var(--c) 22%, var(--panel)); backdrop-filter: blur(6px);
+            box-shadow: 0 4px 14px rgba(0, 0, 0, 0.45);
+            transition: max-width 0.25s ease, background 0.15s;
+        }
+        .pin:hover, .pin:focus-visible { max-width: 240px; }
+        .pin .icon { flex: none; width: 14px; text-align: center; font-size: 15px; }
+        .pin .label { margin-left: 8px; opacity: 0; transition: opacity 0.2s; }
+        .pin:hover .label, .pin:focus-visible .label { opacity: 1; }
+        .pin.page { --c: var(--green); }
+        .pin.sessions { --c: var(--yellow); }
+
+        /* Sessions dropdown, above its pin: save under a name, duplicate, open a saved one (each in a new tab) */
+        .session-menu {
+            position: fixed; left: 14px; bottom: 56px; z-index: 35; width: 300px; padding: 10px;
+            display: flex; flex-direction: column; gap: 4px;
+            background: color-mix(in srgb, var(--panel) 94%, transparent); backdrop-filter: blur(8px);
+            border: 1px solid var(--border); border-radius: 12px; box-shadow: 0 12px 32px rgba(0, 0, 0, 0.55);
+            animation: menu-in 0.12s ease-out;
+        }
+        .session-menu[hidden] { display: none; }
+        @keyframes menu-in { from { opacity: 0; transform: translateY(6px); } }
+        .session-menu .menu-title {
+            margin: 6px 4px 2px; color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em;
+        }
+        .session-menu .menu-row { display: flex; gap: 6px; margin-bottom: 4px; }
+        .session-menu .menu-row input { flex: 1; min-width: 0; padding: 6px 8px; border-radius: 6px; --focus: var(--yellow); }
+        .session-menu .menu-row button { --c: var(--yellow); padding: 4px 12px; }
+        .session-menu .menu-item {
+            --c: var(--text); display: flex; align-items: baseline; justify-content: space-between; gap: 10px;
+            width: 100%; padding: 7px 8px; border: none; border-radius: 6px; background: transparent;
+            font-weight: 500; text-align: left;
+        }
+        .session-menu .menu-item:hover { background: color-mix(in srgb, var(--yellow) 12%, transparent); color: var(--yellow); }
+        .session-menu .menu-item .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .session-menu .menu-item .when { flex: none; color: var(--muted); font-size: 11px; font-weight: 400; }
+        .session-list { max-height: 240px; overflow-y: auto; display: flex; flex-direction: column; }
+        .session-list .empty { padding: 6px 8px; color: var(--muted); font-size: 12px; }
+        .session-list .menu-item ~ .empty { display: none; }
+        .session-label { color: var(--yellow); font-size: 13px; font-weight: 600; }
+        .session-label:empty { display: none; }
+        button.busy { opacity: 0.5; cursor: progress; }
+        .pin.http { --c: var(--purple); }
+        .pin.db { --c: var(--blue); }
+        .pin.kafka { --c: var(--teal); }
+
+        .toast {
+            position: fixed; left: 50%; bottom: 60px; transform: translateX(-50%); z-index: 31;
+            max-width: 60vw; padding: 8px 14px; border-radius: 8px; font-size: 12px;
+            background: var(--panel); color: var(--green); border: 1px solid var(--border);
+            box-shadow: 0 4px 14px rgba(0, 0, 0, 0.45); word-break: break-all;
+            animation: toast 4s ease forwards;
+        }
+        @keyframes toast { 0%, 80% { opacity: 1; } 100% { opacity: 0; visibility: hidden; } }
+
+        /* HTTP config: the bearer token field, with its decode button and a line about its expiry */
+        label.jwt-row input.jwt { font-family: ui-monospace, monospace; font-size: 12px; }
+        label.jwt-row .jwt-decode { margin-left: 6px; padding: 4px 10px; font-size: 12px; flex: none; }
+        .jwt-info { margin: 0 0 4px 130px; font-size: 11px; color: var(--muted); }
+        .jwt-info:empty { display: none; }
+        .jwt-info.ok { color: var(--green); }
+        .jwt-info.bad { color: var(--red); }
+
+        /* The JWT popup: header and payload as JSON */
+        dialog.jwt-dialog {
+            width: min(720px, 92vw); max-height: 86vh; padding: 0; overflow: hidden;
+            background: var(--panel); color: var(--text); border: 1px solid var(--border); border-top: 2px solid var(--purple);
+            border-radius: 12px; box-shadow: 0 16px 48px rgba(0, 0, 0, 0.6);
+        }
+        dialog.jwt-dialog::backdrop { background: rgba(10, 11, 14, 0.6); backdrop-filter: blur(2px); }
+        dialog.jwt-dialog[open] { display: flex; flex-direction: column; }
+        .jwt-dialog header { display: flex; align-items: center; gap: 8px; padding: 10px 14px; border-bottom: 1px solid var(--border); }
+        .jwt-dialog header .title { flex: 1; font-weight: 700; color: var(--purple); }
+        .jwt-dialog header button { --c: var(--purple); padding: 4px 12px; }
+        .jwt-dialog .body { overflow: auto; padding: 4px 14px 14px; }
+        .jwt-dialog h3 { margin: 12px 0 6px; font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; }
+        .jwt-dialog pre {
+            margin: 0; padding: 10px 12px; border-radius: 8px; background: var(--editor); border: 1px solid var(--border);
+            font: 12px/1.5 ui-monospace, monospace; white-space: pre-wrap; word-break: break-all;
+        }
+        .jwt-dialog .times { display: grid; grid-template-columns: max-content 1fr; gap: 3px 12px; font-size: 12px; }
+        .jwt-dialog .times .name { color: var(--muted); font-family: ui-monospace, monospace; }
+        .jwt-dialog .note { margin-top: 12px; font-size: 11px; color: var(--muted); }
+        .jwt-dialog .error { color: var(--red); margin-top: 12px; }        aside button[type="submit"] { margin-top: 8px; }
+    </style>
+</head>
+<body>
+    <div class="guide guide-x"></div>
+    <div class="guide guide-y"></div>
+    <div class="top">
+        <h1>Client</h1>
+        <span class="session-label" th:text="${sessionName}" title="The saved session this tab is working on"></span>
+        <button type="button" class="spawn http" onclick="addCard('http')" title="Add an empty HTTP card, not linked to anything">&#8644; HTTP</button>
+        <button type="button" class="spawn query" onclick="addCard('query')" title="Add an empty query card, not linked to anything">&#9638; Query</button>
+        <!-- A store's own card: a query card linked to a config of that store (one is added, and saved, if there's none) -->
+        <button type="button" class="spawn store mysql" onclick="addStoreCard('mysql')" title="Add a MySQL card (SQL), linked to a MySQL config">&#9638; MySQL</button>
+        <button type="button" class="spawn store mariadb" onclick="addStoreCard('mariadb')" title="Add a MariaDB card (SQL), linked to a MariaDB config">&#9638; MariaDB</button>
+        <button type="button" class="spawn store mongodb" onclick="addStoreCard('mongodb')" title="Add a MongoDB card (mongosh), linked to a MongoDB config">&#10070; MongoDB</button>
+        <button type="button" class="spawn store redis" onclick="addStoreCard('redis')" title="Add a Redis card (commands), linked to a Redis config">&#9670; Redis</button>
+        <button type="button" class="spawn if" onclick="addDecision()"
+                title="Add an if diamond: link a card into it, then link its green (true) and red (false) ports">&#9671; If</button>
+        <button type="button" class="spawn kafka" onclick="addKafka()"
+                title="Add a Kafka card: reads the last (or next) message of a topic, read only">&#9776; Kafka</button>
+    </div>
+    <main id="viewport">
+      <div id="board">
+        <svg id="wires-back" class="wire-layer"></svg>
+        <div id="wire-labels"></div>
+        <form method="post" th:action="@{/client}" id="blocks">
+            <!-- Which workspace (tab) this is, see ClientController -->
+            <input type="hidden" name="ws" th:value="${ws}">
+            <input type="hidden" th:each="value : ${form.extractedVariables}"
+                   th:name="|extractedVariables[${value.key}]|" th:value="${value.value}">
+            <section class="island movable node http-card" data-kind="http"
+                     th:each="r, s : ${form.requests}" th:id="|http-${s.index}|" th:data-node="|h${s.index}|">
+                <span class="port port-in" title="Click to disconnect the card that runs before this one"></span>
+                <h2 class="handle" title="Drag to move, double-click to reset" th:text="|HTTP ${s.count}|">HTTP 1</h2>
+                <input type="hidden" class="next" th:name="|requests[${s.index}].next|" th:value="${r.next}">
+                <input type="hidden" class="when" th:name="|requests[${s.index}].when|" th:value="${r.when}">
+                <input type="hidden" class="layout" th:name="|requests[${s.index}].layout|" th:value="${r.layout}">
+                <span class="cfg-port square" title="Drag onto an HTTP config to use it (click the dashed line to unlink)"></span>
+                <input type="hidden" class="cfg" th:name="|requests[${s.index}].config|" th:value="${r.config}">
+                <div class="request">
+                    <select th:name="|requests[${s.index}].method|">
+                        <option th:each="m : ${ {'GET', 'POST', 'PUT', 'PATCH', 'DELETE'} }"
+                                th:value="${m}" th:text="${m}" th:selected="${m == r.method}"></option>
+                    </select>
+                    <input th:name="|requests[${s.index}].url|" th:value="${r.url}" placeholder="POST http://localhost:8085/orders (the testclient app)">
+                    <button type="submit" name="send" th:value="${s.index}">Send</button>
+                </div>
+                <textarea th:name="|requests[${s.index}].body|" rows="3" th:text="${r.body}" placeholder="Body (optional), e.g. {&quot;product&quot;: &quot;Coffee&quot;, &quot;quantity&quot;: 2}"></textarea>
+                <details class="response-toggle" th:open="${!r.responseHidden}">
+                    <summary>response</summary>
+                    <input type="hidden" class="response-hidden" th:name="|requests[${s.index}].responseHidden|" th:value="${r.responseHidden}">
+                    <textarea class="out" th:name="|requests[${s.index}].output|" rows="8" readonly th:text="${r.output}" placeholder="Response..."></textarea>
+                </details>
+                <div class="extractor">
+                    <label><span>JSON path</span>
+                        <input th:name="|requests[${s.index}].extractor|" th:value="${r.extractor}"
+                               placeholder="processingId or data.processingId">
+                    </label>
+                    <button type="submit" name="extract" th:value="${s.index}">Extract</button>
+                    <textarea class="out" th:name="|requests[${s.index}].extractorOutput|" rows="3" readonly
+                              th:text="${r.extractorOutput}" placeholder="Extracted value..."></textarea>
+                </div>
+                <span class="port port-out" title="Drag onto another card to run it after this one"></span>
+                <div class="mini">
+                    <button type="button" class="add" onclick="duplicateNode(this)" title="Add a copy of this card (same values and links)">+</button>
+                    <button type="button" class="remove" onclick="removeNode(this)" title="Remove this card">&minus;</button>
+                </div>
+            </section>
+
+            <section class="island block movable node" data-kind="query"
+                     th:each="b, s : ${form.blocks}" th:id="|block-${s.index}|" th:data-node="|q${s.index}|">
+                <span class="port port-in" title="Click to disconnect the card that runs before this one"></span>
+                <h2 class="handle" title="Drag to move, double-click to reset" th:text="|Query ${s.count}|">Query 1</h2>
+                <input type="hidden" class="next" th:name="|blocks[${s.index}].next|" th:value="${b.next}">
+                <input type="hidden" class="when" th:name="|blocks[${s.index}].when|" th:value="${b.when}">
+                <input type="hidden" class="layout" th:name="|blocks[${s.index}].layout|" th:value="${b.layout}">
+                <span class="cfg-port triangle" title="Drag onto a DB config to use it (click the dashed line to unlink)"></span>
+                <input type="hidden" class="cfg" th:name="|blocks[${s.index}].config|" th:value="${b.config}">
+                <div class="io" th:classappend="${b.pyHidden} ? 'py-hidden'">
+                    <div class="py-bar">
+                        <button type="button" class="py-toggle" onclick="togglePy(this)" title="Show / hide the script">script</button>
+                        <select class="lang" th:name="|blocks[${s.index}].language|" onchange="setLanguage(this)"
+                                title="Language of the script that runs before the query">
+                            <option value="python" th:selected="${b.language != 'java'}">python</option>
+                            <option value="java" th:selected="${b.language == 'java'}">java</option>
+                        </select>
+                    </div>
+                    <input type="hidden" class="py-flag" th:name="|blocks[${s.index}].pyHidden|" th:value="${b.pyHidden}">
+                    <textarea class="py" rows="6" th:name="|blocks[${s.index}].vars|" th:text="${b.vars}"
+                              placeholder="# python (optional), each run(...) is one execution of the query&#10;for i in range(1, 11):&#10;    run(name=f&quot;Item {i}&quot;, price=i)"></textarea>
+                    <textarea class="sql" rows="6" th:name="|blocks[${s.index}].query|" th:text="${b.query}"
+                              placeholder="SQL, or for a MongoDB config a mongosh expression, for Redis one command per line&#10;SELECT * FROM orders WHERE processing_id = '$(processingId)';&#10;db.reviews.find({ product: &quot;$(product)&quot; }).toArray()&#10;HGETALL product:$(product)"></textarea>
+                </div>
+                <div class="actions">
+                    <button type="submit" name="run" th:value="${s.index}">Run</button>
+                    <label class="schema"><span>schema</span>
+                        <input th:name="|blocks[${s.index}].schema|" th:value="${b.schema}"
+                               placeholder="from config">
+                    </label>
+                </div>
+                <textarea class="out" rows="12" readonly th:name="|blocks[${s.index}].output|" th:text="${b.output}"
+                          placeholder="Output..."></textarea>
+                <span class="port port-out" title="Drag onto another card to run it after this one"></span>
+                <div class="mini">
+                    <button type="button" class="add" onclick="duplicateNode(this)" title="Add a copy of this card (same values and links)">+</button>
+                    <button type="button" class="remove" onclick="removeNode(this)" title="Remove this card">&minus;</button>
+                </div>
+            </section>
+
+            <th:block th:each="d, s : ${form.decisions}">
+                <section th:replace="~{fragments/decision :: card(${d}, ${s.index})}"></section>
+            </th:block>
+
+            <th:block th:each="k, s : ${form.subscribers}">
+                <section th:replace="~{fragments/kafka :: card(${k}, ${s.index})}"></section>
+            </th:block>
+        </form>
+        <svg id="wires" class="wire-layer"></svg>
+      </div>
+    </main>
+    <!-- The blank diamond that the "If" button copies -->
+    <template id="decision-template">
+        <section th:replace="~{fragments/decision :: card(${null}, 0)}"></section>
+    </template>
+    <!-- The blank Kafka card that the "Kafka" button copies -->
+    <template id="kafka-template">
+        <section th:replace="~{fragments/kafka :: card(${null}, 0)}"></section>
+    </template>
+    <div class="zoom">
+        <button type="button" data-zoom="out" title="Zoom out (Ctrl + wheel)">&minus;</button>
+        <button type="button" data-zoom="reset" class="level" title="Back to 100%">100%</button>
+        <button type="button" data-zoom="in" title="Zoom in (Ctrl + wheel)">+</button>
+        <button type="button" data-zoom="fit" title="Zoom to show every card">Fit</button>
+    </div>
+    <div class="config-bar">
+        <div class="config-kinds" title="Which configs the side panel shows">
+            <label class="http"><input type="checkbox" value="http" checked> HTTP</label>
+            <label class="db"><input type="checkbox" value="db" checked> DB</label>
+            <label class="kafka"><input type="checkbox" value="kafka" checked> Kafka</label>
+        </div>
+    </div>
+
+    <!-- Pinned buttons; form="..." submits that form from outside it -->
+    <div class="pins left">
+        <button type="submit" form="blocks" name="save" value="1" class="pin page" title="Save the page: cards, python, links">
+            <span class="icon">&#8615;</span><span class="label">Save page</span>
+        </button>
+        <button type="button" class="pin sessions" onclick="toggleSessions()" title="Sessions: save under a name, open one or a copy in a new tab">
+            <span class="icon">&#9707;</span><span class="label">Sessions</span>
+        </button>
+    </div>
+    <div class="session-menu" hidden th:data-open-url="@{/client/session/open}">
+        <div class="menu-title">Save session</div>
+        <div class="menu-row">
+            <input class="session-name" th:value="${sessionName}" placeholder="name, e.g. orders flow" maxlength="60">
+            <button type="button" onclick="saveSession()">Save</button>
+            <button type="submit" form="blocks" name="saveAs" value="" hidden></button>
+        </div>
+        <button type="button" class="menu-item" onclick="duplicateSession()"><span class="name">&#10697;&nbsp; Duplicate in a new tab</span></button>
+        <button type="button" class="menu-item" onclick="document.getElementById('session-file').click()"
+                title="A session's .json file (tabs, configs, links), e.g. from testclient.sh: saved here, then opened in a new tab">
+            <span class="name">&#8613;&nbsp; Load a session file&hellip;</span></button>
+        <input type="file" id="session-file" accept=".json,application/json" hidden onchange="importSession(this)">
+        <div class="menu-title">Open in a new tab</div>
+        <div class="session-list">
+            <button type="button" class="menu-item" th:each="saved : ${sessions}" th:data-open="${saved.name()}">
+                <span class="name" th:text="${saved.name()}">orders flow</span><span class="when" th:text="${saved.saved()}">19 Oct, 14:02</span>
+            </button>
+            <div class="empty">No saved sessions yet</div>
+        </div>
+    </div>
+    <div class="pins right">
+        <!-- Per kind of config: Save writes the panels as they are on screen, Reset brings back the saved ones.
+             Neither reloads the page, so the board, its cards and their layout stay as they are, saved or not -->
+        <button type="button" class="pin http" data-config="http" onclick="saveConfigs('http')" title="Save the HTTP configs as they are on screen">
+            <span class="icon">&#8615;</span><span class="label">Save HTTP configs</span>
+        </button>
+        <button type="button" class="pin http" data-config="http" onclick="resetConfigs('http')" title="Undo the unsaved changes to the HTTP configs">
+            <span class="icon">&#8635;</span><span class="label">Reset HTTP configs</span>
+        </button>
+        <button type="button" class="pin db" data-config="db" onclick="saveConfigs('db')" title="Save the DB configs as they are on screen">
+            <span class="icon">&#8615;</span><span class="label">Save DB configs</span>
+        </button>
+        <button type="button" class="pin db" data-config="db" onclick="resetConfigs('db')" title="Undo the unsaved changes to the DB configs">
+            <span class="icon">&#8635;</span><span class="label">Reset DB configs</span>
+        </button>
+        <button type="button" class="pin kafka" data-config="kafka" onclick="saveConfigs('kafka')" title="Save the Kafka configs as they are on screen">
+            <span class="icon">&#8615;</span><span class="label">Save Kafka configs</span>
+        </button>
+        <button type="button" class="pin kafka" data-config="kafka" onclick="resetConfigs('kafka')" title="Undo the unsaved changes to the Kafka configs">
+            <span class="icon">&#8635;</span><span class="label">Reset Kafka configs</span>
+        </button>
+    </div>
+    <div class="toast" th:if="${toast}" th:text="${toast}"></div>
+
+    <aside>
+        <form method="post" th:action="@{/client/http-config}" id="http-configs" class="config-list" data-kind="http">
+            <input type="hidden" name="ws" th:value="${ws}">
+            <details open class="http movable config" th:each="c, s : ${httpConfigs}"
+                     th:id="|panel-http-${s.index}|" th:data-index="${s.index}">
+                <summary class="handle" title="Drag to move, double-click to reset"><span class="cfg-port square"></span><span class="title" th:text="|HTTP config ${s.count}|">HTTP config 1</span><span class="mini"><button type="button" class="add" onclick="event.preventDefault(); duplicateConfig(this)" title="Add a copy of this config">+</button><button type="button" class="remove" onclick="event.preventDefault(); removeConfig(this)" title="Remove this config">&minus;</button></span></summary>
+                <label class="default" title="Used by HTTP cards that aren't linked to a config">
+                    <input type="checkbox" class="default-box" value="true"
+                           th:name="|configs[${s.index}].defaultConfig|" th:checked="${c.defaultConfig}"> default
+                </label>
+                <fieldset>
+                    <legend>headers</legend>
+                    <label><span>Accept</span><input th:name="|configs[${s.index}].accept|" th:value="${c.accept}" placeholder="application/json (empty: not sent)"></label>
+                    <label><span>Content-Type</span><input th:name="|configs[${s.index}].contentType|" th:value="${c.contentType}" placeholder="application/json (empty: not sent)"></label>
+                    <label class="jwt-row" title="Paste just the token: it's sent as Authorization: Bearer <token>. Spaces, line breaks, quotes and a pasted 'Bearer ' are dropped">
+                        <span>Bearer token</span>
+                        <input class="jwt" th:name="|configs[${s.index}].jwt|" th:value="${c.jwt}" placeholder="paste the JWT" autocomplete="off">
+                        <button type="button" class="jwt-decode" onclick="showJwt(this)" title="Decode the token: its header and payload as JSON">decode</button>
+                    </label>
+                    <div class="jwt-info"></div>
+                </fieldset>
+                <textarea rows="3" th:name="|configs[${s.index}].headers|" th:text="${c.headers}"
+                          placeholder="Other headers: Header-Name: value (one per line)"></textarea>
+            </details>
+        </form>
+
+        <form method="post" th:action="@{/client/config}" id="db-configs" class="config-list" data-kind="db">
+            <input type="hidden" name="ws" th:value="${ws}">
+            <div class="db-presets" title="A new config for that store, filled in for the testclient stack, and saved">
+                <span>add</span>
+                <button type="button" class="postgres" onclick="addDbConfig('postgres')">PostgreSQL</button>
+                <button type="button" class="mysql" onclick="addDbConfig('mysql')">MySQL</button>
+                <button type="button" class="mariadb" onclick="addDbConfig('mariadb')">MariaDB</button>
+                <button type="button" class="mongodb" onclick="addDbConfig('mongodb')">MongoDB</button>
+                <button type="button" class="redis" onclick="addDbConfig('redis')">Redis</button>
+            </div>
+            <details open class="movable config" th:each="c, s : ${configs}"
+                     th:id="|panel-db-${s.index}|" th:data-index="${s.index}">
+                <summary class="handle" title="Drag to move, double-click to reset"><span class="cfg-port triangle"></span><span class="title" th:text="|DB config ${s.count}|">DB config 1</span><span class="mini"><button type="button" class="add" onclick="event.preventDefault(); duplicateConfig(this)" title="Add a copy of this config">+</button><button type="button" class="remove" onclick="event.preventDefault(); removeConfig(this)" title="Remove this config">&minus;</button></span></summary>
+                <label class="default" title="Used by query cards that aren't linked to a config">
+                    <input type="checkbox" class="default-box" value="true"
+                           th:name="|configs[${s.index}].defaultConfig|" th:checked="${c.defaultConfig}"> default
+                </label>
+                <fieldset>
+                    <legend>container</legend>
+                    <label><span>name</span><input th:name="|configs[${s.index}].containerName|" th:value="${c.containerName}"></label>
+                    <label><span>image</span><input th:name="|configs[${s.index}].image|" th:value="${c.image}"></label>
+                    <label><span>python image</span><input th:name="|configs[${s.index}].pythonImage|" th:value="${c.pythonImage}"></label>
+                    <label><span>java image</span><input th:name="|configs[${s.index}].javaImage|" th:value="${c.javaImage}"></label>
+                </fieldset>
+                <fieldset>
+                    <legend>spring</legend>
+                    <fieldset>
+                        <legend>datasource</legend>
+                        <label title="What the query cards linked to this config run, and with which client"><span>type</span>
+                            <select class="db-type" th:name="|configs[${s.index}].type|" onchange="setDbType(this)">
+                                <option value="postgres" th:selected="${c.type == 'postgres'}">PostgreSQL (SQL, psql)</option>
+                                <option value="mysql" th:selected="${c.type == 'mysql'}">MySQL / MariaDB (SQL)</option>
+                                <option value="mongodb" th:selected="${c.type == 'mongodb'}">MongoDB (mongosh)</option>
+                                <option value="redis" th:selected="${c.type == 'redis'}">Redis (commands)</option>
+                            </select></label>
+                        <label><span>url</span><input class="db-url" th:name="|configs[${s.index}].url|" th:value="${c.url}" placeholder="jdbc:postgresql://localhost:2345/testdb"></label>
+                        <label><span>schema</span><input th:name="|configs[${s.index}].schema|" th:value="${c.schema}" placeholder="shop"></label>
+                        <label><span>username</span><input th:name="|configs[${s.index}].username|" th:value="${c.username}" placeholder="teo"></label>
+                        <label><span>password</span><input type="password" th:name="|configs[${s.index}].password|" th:value="${c.password}" placeholder="kaima"></label>
+                        <label><span>driver-class-name</span><input th:name="|configs[${s.index}].driver|" th:value="${c.driver}"></label>
+                    </fieldset>
+                </fieldset>
+            </details>
+        </form>
+
+        <form method="post" th:action="@{/client/kafka-config}" id="kafka-configs" class="config-list" data-kind="kafka">
+            <input type="hidden" name="ws" th:value="${ws}">
+            <details open class="kafka movable config" th:each="c, s : ${kafkaConfigs}"
+                     th:id="|panel-kafka-${s.index}|" th:data-index="${s.index}">
+                <summary class="handle" title="Drag to move, double-click to reset"><span class="cfg-port circle"></span><span class="title" th:text="|Kafka config ${s.count}|">Kafka config 1</span><span class="mini"><button type="button" class="add" onclick="event.preventDefault(); duplicateConfig(this)" title="Add a copy of this config">+</button><button type="button" class="remove" onclick="event.preventDefault(); removeConfig(this)" title="Remove this config">&minus;</button></span></summary>
+                <label class="default" title="Used by Kafka cards that aren't linked to a config">
+                    <input type="checkbox" class="default-box" value="true"
+                           th:name="|configs[${s.index}].defaultConfig|" th:checked="${c.defaultConfig}"> default
+                </label>
+                <label><span>bootstrap servers</span><input th:name="|configs[${s.index}].bootstrapServers|" th:value="${c.bootstrapServers}"
+                                                            placeholder="localhost:9092"></label>
+                <textarea rows="6" th:name="|configs[${s.index}].properties|" th:text="${c.properties}"
+                          placeholder="security.protocol=PLAINTEXT (one name=value per line; the test Kafka needs nothing else)"
+                          title="Consumer properties, one name=value per line. group.id, enable.auto.commit and the deserializers are set by the card, so the connection stays read only"></textarea>
+                <label><span>java image</span><input th:name="|configs[${s.index}].javaImage|" th:value="${c.javaImage}"></label>
+                <label><span>python image</span><input th:name="|configs[${s.index}].pythonImage|" th:value="${c.pythonImage}"></label>
+                <label><span>container name</span><input th:name="|configs[${s.index}].containerName|" th:value="${c.containerName}"></label>
+            </details>
+        </form>
+    </aside>
+
+    <dialog class="jwt-dialog">
+        <header>
+            <span class="title">JWT</span>
+            <button type="button" class="copy" title="Copy the payload JSON">Copy payload</button>
+            <button type="button" class="close" title="Close (Esc)">&times;</button>
+        </header>
+        <div class="body"></div>
+    </dialog>
+
+    <script th:inline="none">
+        const form = document.getElementById('blocks');
+        // This tab's workspace: card layouts and the view are remembered per workspace, so tabs don't mix
+        const WS = form.querySelector('input[name="ws"]').value || 'default';
+        const CARD = WS === 'default' ? 'card' : `card:${WS}`;
+        const VIEW = WS === 'default' ? 'view' : `view:${WS}`;
+
+        // Four kinds of cards ("nodes"), each numbered from 0 and linked by node id: h0, h1, ... / q0, ... / d0, ... / k0, ...
+        // There's always at least one HTTP and one query card; if diamonds and Kafka cards are optional
+        const KINDS = {
+            http:     { id: 'http',     node: 'h', title: 'HTTP',  list: 'requests',  button: 'send' },
+            query:    { id: 'block',    node: 'q', title: 'Query', list: 'blocks',    button: 'run' },
+            decision: { id: 'decision', node: 'd', title: 'If',    list: 'decisions', button: null, optional: true },
+            kafka:    { id: 'kafka',    node: 'k', title: 'Kafka', list: 'subscribers', button: 'consume', optional: true },
+        };
+        const nodes = kind => [...form.querySelectorAll(kind ? `.node[data-kind="${kind}"]` : '.node')];
+        const byNode = id => (id ? form.querySelector(`.node[data-node="${id}"]`) : null);
+
+        // Copy what the user typed: cloneNode copies the HTML, not the current values
+        function copyValues(from, to) {
+            const src = from.querySelectorAll('textarea, input, select'), dst = to.querySelectorAll('textarea, input, select');
+            src.forEach((el, i) => {
+                if (el.type === 'checkbox') dst[i].checked = el.checked;
+                else dst[i].value = el.value;
+            });
+        }
+
+        // Saved layouts are keyed by element id: move them along when ids shift, drop the one left over
+        function moveLayouts(elements, oldIds, prefix, kind = 'layout') {
+            elements.forEach((el, i) => { if (el.id !== oldIds[i]) saveLayout(el); });
+            try { localStorage.removeItem(`${kind}:${prefix}-${elements.length}`); } catch {}
+        }
+
+        // Keep names, ids, titles and button values in order after adding/removing,
+        // and rewrite every link through old id -> new id ("tmp" is a just-added copy)
+        function renumber() {
+            const remap = {};
+            for (const [kind, k] of Object.entries(KINDS)) {
+                const names = new RegExp(`${k.list}\\[\\d+\\]`);
+                const list = nodes(kind), oldIds = list.map(n => n.id);
+                list.forEach((node, i) => {
+                    if (node.dataset.node) remap[node.dataset.node] = `${k.node}${i}`;
+                    node.id = `${k.id}-${i}`;
+                    node.dataset.node = `${k.node}${i}`;
+                    node.querySelector('h2').textContent = `${k.title} ${i + 1}`;
+                    node.querySelectorAll(`[name^="${k.list}["]`).forEach(el => el.name = el.name.replace(names, `${k.list}[${i}]`));
+                    node.querySelectorAll('button[type="submit"]').forEach(button => { button.value = i; });
+                    // The only HTTP / query card can't be removed
+                    node.querySelector('.mini .remove').disabled = list.length === 1 && !k.optional;
+                });
+                moveLayouts(list, oldIds, k.id, CARD);
+            }
+            nodes().forEach(n => {
+                linkFields(n).forEach(field => writeIds(field, idsIn(field).map(id => remap[id]).filter(Boolean)));
+                setWhen(n, Object.fromEntries(Object.entries(whenOf(n)).map(([id, c]) => [remap[id], c]).filter(([id]) => id)));
+            });
+        }
+
+        // + on a card: a copy right after it, with the same values, config link and links in and out
+        function duplicateNode(button) {
+            const node = button.closest('.node');
+            const copy = node.cloneNode(true);
+            copyValues(node, copy);
+            copy.dataset.node = '';                    // gets its own id in renumber()
+            copy.classList.remove('drop-target', 'dragging');
+            copy.style.cssText = '';
+            node.after(copy);
+            renumber();                                // ids after the copy shift; existing links follow
+
+            // Same links (and link conditions) as the original, now that both have their final ids
+            const original = node.dataset.node, twin = copy.dataset.node;
+            linkFields(node).forEach((field, i) => writeIds(linkFields(copy)[i], idsIn(field)));
+            setWhen(copy, whenOf(node));
+            nodes().forEach(n => {
+                if (n === copy) return;
+                linkFields(n).forEach(field => { if (idsIn(field).includes(original)) writeIds(field, [...idsIn(field), twin]); });
+                const when = whenOf(n);
+                if (original in when) setWhen(n, { ...when, [twin]: when[original] });
+            });
+
+            // Same size, at a free spot in the middle of the screen
+            copy.style.width = copy.dataset.w = node.style.width;
+            copy.style.height = copy.dataset.h = node.style.height;
+            resizes.observe(copy);
+            placeNew(copy);
+            drawWires();
+        }
+
+        // - on a card: remove it and every link to it
+        function removeNode(button) {
+            const node = button.closest('.node');
+            if (nodes(node.dataset.kind).length === 1 && !KINDS[node.dataset.kind].optional) return;
+            forget(node);
+            node.dataset.node = '';  // not in the remap, so links to it disappear
+            node.remove();
+            renumber();
+            fitBoard();
+            drawWires();
+        }
+
+        function togglePy(button) {
+            const io = button.closest('.io');
+            const hidden = io.classList.toggle('py-hidden');
+            io.querySelector('.py-flag').value = hidden;
+        }
+
+        // The script before the query runs in python or java, chosen per card; same run(...) idea in both
+        // Every script gets the variables so far (vars / VARS, and as env vars) and the previous card's result (prev / PREV),
+        // and set(name, value) passes a variable on to every card after it on that path, as $(name)
+        const SCRIPT_PLACEHOLDERS = {
+            python: '# python (optional): vars = the variables so far, prev = the previous card\'s result\n# each run(...) is one execution of the query, set(name, value) passes a variable on\nfor i in range(1, 11):\n    run(name=f"Item {i}", price=i)\nset("lastId", prev["json"]["id"] if prev and prev.get("json") else "")',
+            java: '// java (optional): VARS / var("x") = the variables so far, str/num/has("json.id") read the previous card\'s result\n// each run(...) is one execution of the query, set(name, value) passes a variable on\nfor (int i = 1; i <= 10; i++) {\n    run("name", "Item " + i, "price", i);\n}\nset("lastId", str("json.id"));',
+        };
+        const KAFKA_PLACEHOLDERS = {
+            java: '// java (optional): MESSAGE is the message above, TOPIC its topic, VARS / var("x") the variables so far\n// set("name", value) passes a variable on to every card after this one, as $(name)\nset("sameOrder", MESSAGE.contains(var("processingId")));\nSystem.out.println(MESSAGE.length() + " chars");',
+            python: '# python (optional): MESSAGE is the message above, TOPIC its topic, vars the variables so far\n# set("name", value) passes a variable on to every card after this one, as $(name)\nimport json\nmessage = json.loads(MESSAGE)\nset("state", message["state"])\nset("sameOrder", message["processingId"] == vars["processingId"])',
+        };
+
+        function setLanguage(select) {
+            const placeholders = select.classList.contains('kafka-lang') ? KAFKA_PLACEHOLDERS : SCRIPT_PLACEHOLDERS;
+            select.closest('.io').querySelector('.py').placeholder = placeholders[select.value];
+        }
+
+        // ---- If diamonds: a condition checked in Java, or python returning True / False ----
+        const CHECK_PLACEHOLDERS = {
+            condition: 'status == 200 && data.state == "done"\n(also: exists data.id, items.length > 0, body contains "ok", vars.token, topic == "orders.events", not, or, ...)',
+            python: '# python: return True or False (one line is the expression to return)\n# prev: the previous card\'s result (prev["status"], prev["json"], ...), vars: the variables so far\n# set(name, value) passes a variable on, down the branch taken\nreturn prev["status"] == 200 and prev["json"]["state"] == "done"',
+            java: '// java: return true or false (one line is the expression to return)\n// num / str / bool / has("json.state") read the previous card\'s result, var("x") the variables so far\n// set(name, value) passes a variable on, down the branch taken\nnum("status") == 200 && str("json.state").equals("done")',
+        };
+
+        function setMode(select) {
+            const check = select.closest('.check');
+            check.classList.toggle('python', select.value !== 'condition');
+            check.querySelector('.cond').placeholder = CHECK_PLACEHOLDERS[select.value];
+        }
+
+        // "HTTP" / "Query" buttons: an empty card in the middle of the screen, with no links and no config link.
+        // A copy of the first card of that kind, emptied (there's always at least one)
+        function addCard(kind) {
+            const list = nodes(kind);
+            const card = list[0].cloneNode(true);
+            card.querySelectorAll('textarea, input').forEach(el => {
+                if (el.classList.contains('cfg')) el.value = -1;
+                else if (el.classList.contains('py-flag') || el.classList.contains('response-hidden')) el.value = 'false';
+                else el.value = '';
+            });
+            card.querySelectorAll('select').forEach(select => { select.selectedIndex = 0; });  // GET, python
+            card.querySelector('.io')?.classList.remove('py-hidden');
+            const response = card.querySelector('.response-toggle');
+            if (response) response.open = true;
+            card.dataset.node = '';  // gets its own id in renumber()
+            card.classList.remove('drop-target', 'dragging');
+            card.style.cssText = '';
+            list.at(-1).after(card);
+            renumber();
+            card.querySelectorAll('.io .lang').forEach(setLanguage);
+            card.style.width = card.dataset.w = `${defaultWidth()}px`;
+            resizes.observe(card);
+            placeNew(card);
+            drawWires();
+        }
+
+        // "If" button: a blank diamond in the middle of the screen
+        function addDecision() {
+            const card = document.getElementById('decision-template').content.firstElementChild.cloneNode(true);
+            card.dataset.node = '';  // gets its own id in renumber()
+            form.appendChild(card);
+            renumber();
+            setMode(card.querySelector('.mode'));
+            card.style.width = card.dataset.w = `${Math.min(defaultWidth(), 380)}px`;
+            resizes.observe(card);
+            placeNew(card);
+            drawWires();
+        }
+
+        // "Kafka" button: a blank Kafka card in the middle of the screen
+        function addKafka() {
+            const card = document.getElementById('kafka-template').content.firstElementChild.cloneNode(true);
+            card.dataset.node = '';  // gets its own id in renumber()
+            form.appendChild(card);
+            renumber();
+            card.style.width = card.dataset.w = `${defaultWidth()}px`;
+            resizes.observe(card);
+            placeNew(card);
+            drawWires();
+        }
+
+        // ---- Config panels: HTTP configs (square), DB configs (triangle) and Kafka configs (circle),
+        // linked from cards by index; the side panel shows one kind at a time, in tabs ----
+        const CONFIGS = {
+            http:  { form: 'http-configs',  id: 'panel-http',  title: 'HTTP config',  card: 'http' },
+            db:    { form: 'db-configs',    id: 'panel-db',    title: 'DB config',    card: 'query' },
+            kafka: { form: 'kafka-configs', id: 'panel-kafka', title: 'Kafka config', card: 'kafka' },
+        };
+        const configKindOf = node => ({ http: 'http', query: 'db', kafka: 'kafka' })[node.dataset.kind];
+
+        // The ticks at the top right pick which kinds of config the side panel shows (all of them by default);
+        // with none ticked the panel slides away and the board gets the whole window
+        const kindBoxes = [...document.querySelectorAll('.config-kinds input')];
+        const shownKinds = () => kindBoxes.filter(box => box.checked).map(box => box.value);
+
+        function showKinds(kinds) {
+            kindBoxes.forEach(box => { box.checked = kinds.includes(box.value); });
+            for (const [k, c] of Object.entries(CONFIGS)) document.getElementById(c.form).hidden = !kinds.includes(k);
+            document.querySelectorAll('.pins.right [data-config]').forEach(pin => { pin.hidden = !kinds.includes(pin.dataset.config); });
+            document.body.classList.toggle('aside-closed', !kinds.length);
+            try { localStorage.setItem('configKinds', JSON.stringify(kinds)); } catch {}
+            drawWires();
+        }
+
+        // Show this kind too (when a card's config link is dragged, so its configs are on screen)
+        function showKind(kind) {
+            if (!shownKinds().includes(kind)) showKinds([...shownKinds(), kind]);
+        }
+
+        kindBoxes.forEach(box => box.addEventListener('change', () => {
+            showKinds(shownKinds());
+            applyView();  // the board's visible width changes when the panel opens or closes
+        }));
+        const configs = kind => [...document.querySelectorAll(`#${CONFIGS[kind].form} .config`)];
+        const cfgOf = node => +node.querySelector('.cfg').value;
+        const setCfg = (node, index) => { node.querySelector('.cfg').value = index; drawWires(); };
+
+        // Keep names, ids and titles in order, and point cards' config links at the new indexes
+        // (-1 for a removed config, "tmp" is a just-added copy)
+        function renumberConfigs() {
+            for (const [kind, k] of Object.entries(CONFIGS)) {
+                const list = configs(kind), oldIds = list.map(p => p.id), remap = {};
+                list.forEach((panel, i) => {
+                    remap[panel.dataset.index] = i;
+                    panel.id = `${k.id}-${i}`;
+                    panel.dataset.index = i;
+                    panel.querySelector('.title').textContent = `${k.title} ${i + 1}`;
+                    panel.querySelectorAll('[name^="configs["]').forEach(el => el.name = el.name.replace(/configs\[\d+\]/, `configs[${i}]`));
+                    panel.querySelector('.mini .remove').disabled = list.length === 1;
+                });
+                moveLayouts(list, oldIds, k.id);
+                nodes(k.card).forEach(n => {
+                    const cfg = cfgOf(n);
+                    if (cfg >= 0) n.querySelector('.cfg').value = cfg in remap ? remap[cfg] : -1;
+                });
+                // With a single config the "default" checkbox is pointless: it's always used
+                document.getElementById(k.form).classList.toggle('single', list.length === 1);
+            }
+        }
+
+        // + on a config: a copy right after it (not the default)
+        function duplicateConfig(button) {
+            const panel = button.closest('.config');
+            const copy = panel.cloneNode(true);
+            copyValues(panel, copy);
+            copy.querySelector('.default-box').checked = false;
+            copy.dataset.index = 'tmp';
+            copy.classList.remove('drop-target', 'dragging');
+            copy.style.cssText = '';
+            copy.open = true;
+            panel.after(copy);
+            renumberConfigs();
+            initLayout(copy);
+            drawWires();
+        }
+
+        // - on a config: cards linked to it go back to the default
+        function removeConfig(button) {
+            const panel = button.closest('.config');
+            if (panel.parentElement.querySelectorAll('.config').length === 1) return;
+            forget(panel);
+            panel.dataset.index = 'gone';
+            panel.remove();
+            renumberConfigs();
+            drawWires();
+        }
+
+        // A DB config's type: the url and schema it takes, and the image its client runs in (empty: the type's own)
+        const DB_TYPES = {
+            postgres: { url: 'jdbc:postgresql://localhost:2345/testdb', schema: 'shop (the search_path)', image: 'postgres:alpine' },
+            mysql:    { url: 'jdbc:mysql://localhost:3307/loyalty', schema: 'another database (optional)', image: 'mysql:8.4' },
+            mongodb:  { url: 'mongodb://localhost:27017/shopdocs', schema: '(not used)', image: 'mongo:7' },
+            redis:    { url: 'redis://localhost:6379/0', schema: '(not used)', image: 'redis:7-alpine' },
+        };
+        function setDbType(select) {
+            const panel = select.closest('.config'), type = DB_TYPES[select.value];
+            panel.querySelector('.db-url').placeholder = type.url;
+            const schema = panel.querySelector('[name$=".schema"]');
+            if (schema) schema.placeholder = type.schema;
+            // Another type's client image would run the wrong program: switch it along, unless it was set by hand
+            const image = panel.querySelector('[name$=".image"]');
+            if (image && (!image.value || Object.values(DB_TYPES).some(t => t.image === image.value))) image.value = type.image;
+        }
+        function initDbPlaceholders(select) {
+            const panel = select.closest('.config'), type = DB_TYPES[select.value];
+            panel.querySelector('.db-url').placeholder = type.url;
+            const schema = panel.querySelector('[name$=".schema"]');
+            if (schema) schema.placeholder = type.schema;
+        }
+        document.querySelectorAll('select.db-type').forEach(initDbPlaceholders);
+
+        // ---- Config pins: Save and Reset per kind, in the background. They only touch that kind's panels: the board,
+        // its cards, their links and layout, and the other kinds' panels stay as they are, whether the session is
+        // saved or not ----
+        async function saveConfigs(kind) {
+            const k = CONFIGS[kind], target = document.getElementById(k.form);
+            const buttons = document.querySelectorAll(`.pins.right [data-config="${kind}"]`);
+            buttons.forEach(b => { b.disabled = true; b.classList.add('busy'); });
+            try {
+                const response = await fetch(target.action, { method: 'POST', body: new URLSearchParams(new FormData(target)) });
+                // The answer is the page after the save: take only what the server changed, which default is ticked
+                const page = new DOMParser().parseFromString(await response.text(), 'text/html');
+                page.querySelectorAll(`#${k.form} .default-box[name]`).forEach(box => {
+                    const mine = target.querySelector(`.default-box[name="${box.name}"]`);
+                    if (mine) mine.checked = box.checked;
+                });
+                showToast(!response.ok ? `Failed: HTTP ${response.status}` : page.querySelector('.toast')?.textContent || `${k.title}s saved`);
+            } catch (err) {
+                showToast(`Failed: ${err.message}`);
+            } finally {
+                buttons.forEach(b => { b.disabled = false; b.classList.remove('busy'); });
+            }
+        }
+
+        async function resetConfigs(kind) {
+            const k = CONFIGS[kind], target = document.getElementById(k.form);
+            try {
+                // The saved configs, as the page would show them; only this kind's panels are taken from it
+                const response = await fetch(location.href, { cache: 'no-store' });
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                const fresh = new DOMParser().parseFromString(await response.text(), 'text/html').getElementById(k.form);
+                if (!fresh) throw new Error('no saved configs in the answer');
+                target.querySelectorAll('.config').forEach(panel => { resizes.unobserve(panel); panel.remove(); });
+                fresh.querySelectorAll('.config').forEach(panel => target.appendChild(document.adoptNode(panel)));
+                renumberConfigs();
+                target.querySelectorAll('.config').forEach(panel => {
+                    initLayout(panel);   // where it was: panels keep their place in this browser
+                    panel.querySelectorAll('select.db-type').forEach(initDbPlaceholders);
+                    panel.querySelectorAll('input.jwt').forEach(updateJwtInfo);
+                });
+                drawWires();
+                showToast(`${k.title}s back to the saved ones`);
+            } catch (err) {
+                showToast(`Couldn't reset the ${k.title}s: ${err.message}`);
+            }
+        }
+
+        // ---- Each store's own config and card: the presets are the testclient stack's ----
+        const DB_PRESETS = {
+            postgres: { type: 'postgres', url: 'jdbc:postgresql://localhost:2345/testdb', schema: 'shop', username: 'teo', password: 'kaima', image: 'postgres:alpine', driver: 'org.postgresql.Driver' },
+            mysql:    { type: 'mysql', url: 'jdbc:mysql://localhost:3307/loyalty', schema: '', username: 'teo', password: 'kaima', image: 'mysql:8.4', driver: 'com.mysql.cj.jdbc.Driver' },
+            mariadb:  { type: 'mysql', url: 'jdbc:mariadb://localhost:3308/warehouse', schema: '', username: 'teo', password: 'kaima', image: 'mysql:8.4', driver: 'org.mariadb.jdbc.Driver' },
+            mongodb:  { type: 'mongodb', url: 'mongodb://localhost:27017/shopdocs?authSource=admin', schema: '', username: 'teo', password: 'kaima', image: 'mongo:7', driver: '' },
+            redis:    { type: 'redis', url: 'redis://localhost:6379/0', schema: '', username: '', password: 'kaima', image: 'redis:7-alpine', driver: '' },
+        };
+        const presetOf = panel => {
+            const type = panel.querySelector('select.db-type')?.value || 'postgres';
+            return type === 'mysql' ? (/mariadb/i.test(panel.querySelector('.db-url')?.value || '') ? 'mariadb' : 'mysql') : type;
+        };
+
+        // A new DB config for that store, after the others, then saved: query cards run with the saved configs
+        async function addDbConfig(key) {
+            const preset = DB_PRESETS[key], panels = configs('db');
+            duplicateConfig(panels.at(-1).querySelector('.mini .add'));
+            const panel = configs('db')[panels.length];
+            const field = name => panel.querySelector(`[name$=".${name}"]`);
+            field('type').value = preset.type;
+            for (const name of ['url', 'schema', 'username', 'password', 'image', 'driver']) {
+                if (field(name)) field(name).value = preset[name];
+            }
+            initDbPlaceholders(field('type'));
+            showKind('db');
+            panel.open = true;
+            panel.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+            drawWires();
+            await saveConfigs('db');
+            return panels.length;
+        }
+
+        // A store's own card: a query card linked to the first config of that store, added if there's none
+        async function addStoreCard(key) {
+            addCard('query');
+            const card = nodes('query').at(-1);
+            let index = configs('db').findIndex(panel => presetOf(panel) === key);
+            if (index < 0) index = await addDbConfig(key);
+            setCfg(card, index);
+            updateDbBadges();
+            card.querySelector('textarea.sql')?.focus();
+        }
+
+        // Only one default per kind: ticking one unticks the others
+        document.addEventListener('change', e => {
+            if (!e.target.classList.contains('default-box') || !e.target.checked) return;
+            e.target.closest('.config-list').querySelectorAll('.default-box').forEach(box => box.checked = box === e.target);
+        });
+
+        document.addEventListener('toggle', e => {
+            if (!e.target.classList.contains('response-toggle')) return;
+            e.target.querySelector('.response-hidden').value = !e.target.open;
+        }, true);
+
+        // Enter in a card's input sends/runs that card, not the first button in the form
+        form.addEventListener('keydown', e => {
+            if (e.key !== 'Enter' || e.target.tagName !== 'INPUT') return;
+            e.preventDefault();
+            const button = e.target.closest('.node')?.querySelector('button[type="submit"]');
+            if (button) form.requestSubmit(button);
+        });
+
+        // ---- Board: cards sit on a big board you pan (drag an empty spot, Space + drag, wheel) and zoom
+        // (Ctrl + wheel, the controls at the bottom). It grows when a card gets near its edge. ----
+        const viewport = document.getElementById('viewport');
+        const board = document.getElementById('board');
+        const aside = document.querySelector('aside');
+        // Within EDGE of the board's edge, the board grows by GROW; PAD is how far you can pan past it
+        const EDGE = 200, GROW = 600, PAD = 80, MIN_ZOOM = 0.25, MAX_ZOOM = 1.5;
+        // Pan offset (screen px), zoom, and the board's size (board px)
+        const view = { x: 0, y: 0, zoom: 1, w: 0, h: 0 };
+
+        // Cards live on the board (positions in board px, scaled by the zoom); config panels in the side panel
+        const isCard = el => !!el.classList?.contains('node');
+        const scaleOf = el => (isCard(el) ? view.zoom : 1);
+        const peers = el => (isCard(el) ? nodes() : [...aside.querySelectorAll('.movable')]).filter(other => other !== el);
+
+        const asideOpen = () => !document.body.classList.contains('aside-closed');
+        const visibleWidth = () => viewport.clientWidth - (asideOpen() ? aside.offsetWidth : 0);
+        const defaultWidth = () => Math.max(320, Math.round(visibleWidth() / 2));
+
+        // Screen point -> board coordinates
+        function toBoard(clientX, clientY) {
+            const b = board.getBoundingClientRect();
+            return { x: (clientX - b.left) / view.zoom, y: (clientY - b.top) / view.zoom };
+        }
+
+        // Keep the board on screen, centred when it's smaller than the screen
+        function clampView() {
+            const vw = visibleWidth(), vh = viewport.clientHeight;
+            const bw = view.w * view.zoom, bh = view.h * view.zoom;
+            view.x = bw <= vw ? (vw - bw) / 2 : Math.min(PAD, Math.max(vw - bw - PAD, view.x));
+            view.y = bh <= vh ? (vh - bh) / 2 : Math.min(PAD, Math.max(vh - bh - PAD, view.y));
+        }
+
+        function applyView() {
+            clampView();
+            board.style.width = `${view.w}px`;
+            board.style.height = `${view.h}px`;
+            board.style.transform = `translate(${view.x}px, ${view.y}px) scale(${view.zoom})`;
+            document.querySelector('.zoom .level').textContent = `${Math.round(view.zoom * 100)}%`;
+            try { localStorage.setItem(VIEW, JSON.stringify({ x: view.x, y: view.y, zoom: view.zoom })); } catch {}
+            drawWires();
+        }
+
+        // Zoom keeping the board point under (clientX, clientY) where it is
+        function zoomAt(clientX, clientY, zoom) {
+            zoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, zoom));
+            view.x = clientX - (clientX - view.x) * zoom / view.zoom;
+            view.y = clientY - (clientY - view.y) * zoom / view.zoom;
+            view.zoom = zoom;
+            applyView();
+        }
+
+        const zoomBy = factor => zoomAt(visibleWidth() / 2, viewport.clientHeight / 2, view.zoom * factor);
+
+        // The area all cards cover, in board coordinates
+        function cardBounds() {
+            const list = nodes();
+            if (!list.length) return { left: 0, top: 0, right: 0, bottom: 0 };
+            return {
+                left: Math.min(...list.map(n => +n.dataset.x)),
+                top: Math.min(...list.map(n => +n.dataset.y)),
+                right: Math.max(...list.map(n => +n.dataset.x + n.offsetWidth)),
+                bottom: Math.max(...list.map(n => +n.dataset.y + n.offsetHeight)),
+            };
+        }
+
+        // Zoom (up to 100%) and pan so every card is on screen
+        function fit() {
+            const b = cardBounds(), m = 40;
+            view.zoom = Math.min(1, MAX_ZOOM, Math.max(MIN_ZOOM, Math.min(
+                    visibleWidth() / (b.right - b.left + 2 * m), viewport.clientHeight / (b.bottom - b.top + 2 * m))));
+            view.x = (visibleWidth() - (b.left + b.right) * view.zoom) / 2;
+            view.y = (viewport.clientHeight - (b.top + b.bottom) * view.zoom) / 2;
+            applyView();
+        }
+
+        // A card near the board's edge makes the board bigger. Near the top / left, every card moves over
+        // to make room there and the view moves along, so nothing jumps. Returns that shift.
+        function growToFit(el) {
+            const sx = +el.dataset.x < EDGE ? GROW : 0, sy = +el.dataset.y < EDGE ? GROW : 0;
+            if (sx || sy) {
+                nodes().forEach(n => { place(n, +n.dataset.x + sx, +n.dataset.y + sy); saveLayout(n); });
+                view.w += sx;
+                view.h += sy;
+                view.x -= sx * view.zoom;
+                view.y -= sy * view.zoom;
+            }
+            const right = +el.dataset.x + el.offsetWidth, bottom = +el.dataset.y + el.offsetHeight;
+            if (right > view.w - EDGE) view.w = right + GROW;
+            if (bottom > view.h - EDGE) view.h = bottom + GROW;
+            applyView();
+            return { x: sx, y: sy };
+        }
+
+        // The board fits the cards: EDGE of room above / left of them, GROW below / right, and at least a bit
+        // more than the screen. Cards and view move together, so nothing jumps. Run once a drag, resize or
+        // removal is done, so a board that grew while a card was dragged out shrinks back when it comes in.
+        function fitBoard() {
+            const b = cardBounds();
+            const sx = EDGE - b.left, sy = EDGE - b.top;
+            if (sx || sy) {
+                nodes().forEach(n => { place(n, +n.dataset.x + sx, +n.dataset.y + sy); saveLayout(n); });
+                view.x -= sx * view.zoom;
+                view.y -= sy * view.zoom;
+            }
+            view.w = Math.max(b.right + sx + GROW, visibleWidth() * 1.25);
+            view.h = Math.max(b.bottom + sy + GROW, viewport.clientHeight * 1.25);
+            applyView();
+        }
+
+        // A new card: in the middle of the screen, or the nearest free spot around it
+        function placeNew(el) {
+            const cx = (visibleWidth() / 2 - view.x) / view.zoom - el.offsetWidth / 2;
+            const cy = (viewport.clientHeight / 2 - view.y) / view.zoom - el.offsetHeight / 2;
+            const STEP = 40, spots = [];
+            for (let i = -12; i <= 12; i++) for (let j = -12; j <= 12; j++) spots.push([cx + i * STEP, cy + j * STEP]);
+            spots.sort((a, b) => Math.hypot(a[0] - cx, a[1] - cy) - Math.hypot(b[0] - cx, b[1] - cy));
+            const free = spots.map(([x, y]) => [Math.max(0, x), Math.max(0, y)])
+                    .find(([x, y]) => { place(el, x, y); return !overlaps(el); });
+            if (!free) place(el, Math.max(0, cx), Math.max(0, cy));
+            saveLayout(el);
+            growToFit(el);
+        }
+
+        // ---- Layout: move/resize boxes. Cards keep theirs in the page (saved with it) and in this browser,
+        // config panels only in this browser ----
+        const layoutKey = el => `${isCard(el) ? CARD : 'layout'}:${el.id}`;
+
+        function readLayout(el) {
+            try {
+                const saved = JSON.parse(localStorage.getItem(layoutKey(el)));
+                if (saved) return saved;
+            } catch {}
+            if (!isCard(el)) return {};
+            const [x, y, w, h] = el.querySelector('.layout').value.split(',');
+            return x ? { x: +x, y: +y, w: w ? `${w}px` : '', h: h ? `${h}px` : '' } : {};
+        }
+
+        function saveLayout(el) {
+            const layout = { x: +el.dataset.x || 0, y: +el.dataset.y || 0, w: el.style.width, h: el.style.height };
+            if (isCard(el)) {
+                el.querySelector('.layout').value = [layout.x, layout.y, parseFloat(layout.w) || '', parseFloat(layout.h) || ''].join(',');
+            }
+            try { localStorage.setItem(layoutKey(el), JSON.stringify(layout)); } catch {}
+        }
+
+        function forget(el) {
+            try { localStorage.removeItem(layoutKey(el)); } catch {}
+        }
+
+        function place(el, x, y) {
+            el.dataset.x = x;
+            el.dataset.y = y;
+            if (isCard(el)) {
+                el.style.left = `${x}px`;
+                el.style.top = `${y}px`;
+            } else {
+                el.style.transform = x || y ? `translate(${x}px, ${y}px)` : '';
+            }
+            drawWires();
+        }
+
+        // Would el overlap one of its peers if shifted by (dx, dy) screen px?
+        function overlaps(el, dx = 0, dy = 0) {
+            const r = el.getBoundingClientRect();
+            const left = r.left + dx, top = r.top + dy, right = r.right + dx, bottom = r.bottom + dy;
+            return peers(el).some(other => {
+                const o = other.getBoundingClientRect();
+                return left < o.right && right > o.left && top < o.bottom && bottom > o.top;
+            });
+        }
+
+        // Resizing sets inline width/height: keep it unless it now overlaps something, then undo
+        const resizes = new ResizeObserver(entries => {
+            entries.forEach(({ target }) => {
+                if (!target.style.width && !target.style.height) return;
+                if (overlaps(target)) {
+                    target.style.width = target.dataset.w || '';
+                    target.style.height = target.dataset.h || '';
+                } else {
+                    target.dataset.w = target.style.width;
+                    target.dataset.h = target.style.height;
+                    saveLayout(target);
+                    if (isCard(target)) fitBoard();
+                }
+            });
+            drawWires();
+        });
+
+        function initLayout(el) {
+            const layout = readLayout(el);
+            el.style.width = el.dataset.w = layout.w || '';
+            el.style.height = el.dataset.h = layout.h || '';
+            place(el, layout.x || 0, layout.y || 0);
+            resizes.observe(el);
+        }
+
+        // Cards without a board position yet (from before the board) go where they were on the old page:
+        // laid out in the page flow once, plus the offset they had been dragged by
+        function convertOldLayouts() {
+            const fresh = nodes().filter(n => readLayout(n).x === undefined);
+            if (!fresh.length) return;
+            board.style.width = `${visibleWidth()}px`;
+            board.classList.add('flow');
+            const measured = fresh.map(n => {
+                let old = {};
+                try { old = JSON.parse(localStorage.getItem(`layout:${n.id}`)) || {}; } catch {}
+                return { n, x: n.offsetLeft + (old.x || 0), y: n.offsetTop + (old.y || 0), w: old.w || `${n.offsetWidth}px`, h: old.h || '' };
+            });
+            board.classList.remove('flow');
+            measured.forEach(({ n, x, y, w, h }) => {
+                n.dataset.x = x;
+                n.dataset.y = y;
+                n.style.width = w;
+                n.style.height = h;
+                saveLayout(n);
+                try { localStorage.removeItem(`layout:${n.id}`); } catch {}
+            });
+        }
+
+        // Board size and view on load: room around the cards, and the view from last time
+        function startBoard() {
+            const b = cardBounds();
+            const sx = EDGE - b.left, sy = EDGE - b.top;
+            if (sx || sy) nodes().forEach(n => { place(n, +n.dataset.x + sx, +n.dataset.y + sy); saveLayout(n); });
+            const moved = cardBounds();
+            view.w = Math.max(moved.right + GROW, visibleWidth() * 1.25);
+            view.h = Math.max(moved.bottom + GROW, viewport.clientHeight * 1.25);
+            let saved = null;
+            try { saved = JSON.parse(localStorage.getItem(VIEW)); } catch {}
+            if (saved) {
+                view.zoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, +saved.zoom || 1));
+                view.x = saved.x - sx * view.zoom;
+                view.y = saved.y - sy * view.zoom;
+            } else {
+                // First time: the cards' top-left corner, just below the title
+                view.x = 24 - moved.left;
+                view.y = 64 - moved.top;
+            }
+            applyView();
+        }
+
+        aside.addEventListener('scroll', drawWires);
+        aside.addEventListener('transitionend', drawWires);
+
+        // Pan: drag an empty spot (or with the middle button), or hold Space and drag anywhere
+        let spaceDown = false;
+        const typing = el => !!el.closest?.('input, textarea, select, [contenteditable]');
+        addEventListener('keydown', e => {
+            if (e.code !== 'Space' || typing(e.target)) return;
+            e.preventDefault();
+            spaceDown = true;
+            viewport.classList.add('grab');
+        });
+        addEventListener('keyup', e => {
+            if (e.code !== 'Space') return;
+            spaceDown = false;
+            viewport.classList.remove('grab');
+        });
+
+        viewport.addEventListener('pointerdown', e => {
+            const empty = !e.target.closest('.node, .wire-label, path.hit');
+            if (!(e.button === 1 || (e.button === 0 && (spaceDown || empty)))) return;
+            e.preventDefault();
+            e.stopPropagation();  // not a card drag / link drag
+            const startX = e.clientX - view.x, startY = e.clientY - view.y;
+            viewport.classList.add('panning');
+            const move = ev => {
+                view.x = ev.clientX - startX;
+                view.y = ev.clientY - startY;
+                applyView();
+            };
+            const up = () => {
+                removeEventListener('pointermove', move);
+                removeEventListener('pointerup', up);
+                viewport.classList.remove('panning');
+            };
+            addEventListener('pointermove', move);
+            addEventListener('pointerup', up);
+        }, true);
+
+        // Wheel / trackpad pans, Ctrl + wheel (or a pinch) zooms; a box that can still scroll scrolls itself
+        viewport.addEventListener('wheel', e => {
+            const unit = e.deltaMode === 1 ? 16 : 1;
+            if (e.ctrlKey || e.metaKey) {
+                e.preventDefault();
+                zoomAt(e.clientX, e.clientY, view.zoom * Math.exp(-e.deltaY * unit * 0.002));
+                return;
+            }
+            const box = e.target.closest('textarea, .movable');
+            const canScroll = box && box.scrollHeight > box.clientHeight + 1
+                    && (e.deltaY < 0 ? box.scrollTop > 0 : box.scrollTop + box.clientHeight < box.scrollHeight - 1);
+            if (canScroll) return;
+            e.preventDefault();
+            const sideways = e.shiftKey && !e.deltaX;
+            view.x -= (sideways ? e.deltaY : e.deltaX) * unit;
+            view.y -= (sideways ? 0 : e.deltaY) * unit;
+            applyView();
+        }, { passive: false });
+
+        // The browser scrolls the viewport to show a focused field: turn that into a pan instead
+        viewport.addEventListener('scroll', () => {
+            if (!viewport.scrollLeft && !viewport.scrollTop) return;
+            view.x -= viewport.scrollLeft;
+            view.y -= viewport.scrollTop;
+            viewport.scrollLeft = viewport.scrollTop = 0;
+            applyView();
+        });
+
+        document.querySelector('.zoom').addEventListener('click', e => {
+            const action = e.target.closest('button')?.dataset.zoom;
+            if (action === 'in') zoomBy(1.2);
+            if (action === 'out') zoomBy(1 / 1.2);
+            if (action === 'reset') zoomBy(1 / view.zoom);
+            if (action === 'fit') fit();
+        });
+
+        // Move by the title: cards in board px (so divided by the zoom), config panels in screen px
+        document.addEventListener('pointerdown', e => {
+            const handle = e.target.closest('.handle');
+            if (!handle || e.button !== 0 || e.target.closest('button')) return;
+            const el = handle.closest('.movable'), scale = scaleOf(el);
+            const startX = e.clientX, startY = e.clientY;
+            let fromX = +el.dataset.x || 0, fromY = +el.dataset.y || 0;
+            let moved = false;
+
+            const move = ev => {
+                const dx = (ev.clientX - startX) / scale, dy = (ev.clientY - startY) / scale;
+                if (!moved && Math.hypot(ev.clientX - startX, ev.clientY - startY) < 4) return;  // small jitter is still a click
+                moved = true;
+                el.classList.add('dragging');
+                // Go where the pointer is (nudged onto a nearby guide, unless Alt is held)
+                // if that's free, otherwise slide along the blocking box
+                const x = +el.dataset.x, y = +el.dataset.y;
+                let { tx, ty } = ev.altKey ? noGuides(fromX + dx, fromY + dy) : snap(el, fromX + dx, fromY + dy);
+                if (isCard(el)) {
+                    tx = Math.max(0, tx);
+                    ty = Math.max(0, ty);
+                }
+                const options = [
+                    [tx, ty],
+                    [tx, y],
+                    [x, ty],
+                ];
+                const free = options.find(([nx, ny]) => !overlaps(el, (nx - x) * scale, (ny - y) * scale));
+                if (!free) return;
+                place(el, free[0], free[1]);
+                if (isCard(el)) {
+                    const shift = growToFit(el);
+                    fromX += shift.x;
+                    fromY += shift.y;
+                }
+            };
+            const up = () => {
+                removeEventListener('pointermove', move);
+                removeEventListener('pointerup', up);
+                el.classList.remove('dragging');
+                noGuides();
+                if (!moved) return;
+                saveLayout(el);
+                if (isCard(el)) fitBoard();
+                // A drag shouldn't also open/close a panel
+                const swallow = ev => ev.preventDefault();
+                handle.addEventListener('click', swallow, true);
+                setTimeout(() => handle.removeEventListener('click', swallow, true));
+            };
+            addEventListener('pointermove', move);
+            addEventListener('pointerup', up);
+        });
+
+        // ---- Alignment guides: soft snap to other boxes' edges/centres (and a panel's own start position) ----
+        const SNAP = 8;
+        const guideX = document.querySelector('.guide-x'), guideY = document.querySelector('.guide-y');
+
+        function noGuides(tx, ty) {
+            guideX.classList.remove('show');
+            guideY.classList.remove('show');
+            return { tx, ty };
+        }
+
+        // Closest (target - edge) within SNAP screen px, or null
+        function nearest(edges, targets) {
+            let best = null;
+            for (const e of edges) for (const t of targets) {
+                const d = t - e;
+                if (Math.abs(d) <= SNAP && (!best || Math.abs(d) < Math.abs(best.d))) best = { d, at: t };
+            }
+            return best;
+        }
+
+        function showGuide(guide, best, prop) {
+            guide.classList.toggle('show', !!best);
+            if (best) guide.style[prop] = `${best.at}px`;
+        }
+
+        // (tx, ty) is where el would go, in its own units; the guides work in screen px
+        function snap(el, tx, ty) {
+            const scale = scaleOf(el);
+            const r = el.getBoundingClientRect();
+            const x = +el.dataset.x, y = +el.dataset.y;
+            const left = r.left + (tx - x) * scale, top = r.top + (ty - y) * scale;
+
+            const xs = [], ys = [];
+            if (!isCard(el)) {
+                // where the panel started, with no move at all
+                const homeLeft = r.left - x, homeTop = r.top - y;
+                xs.push(homeLeft, homeLeft + r.width);
+                ys.push(homeTop, homeTop + r.height);
+            }
+            peers(el).forEach(other => {
+                const o = other.getBoundingClientRect();
+                xs.push(o.left, o.right, o.left + o.width / 2);
+                ys.push(o.top, o.bottom, o.top + o.height / 2);
+            });
+
+            const bx = nearest([left, left + r.width, left + r.width / 2], xs);
+            const by = nearest([top, top + r.height, top + r.height / 2], ys);
+            showGuide(guideX, bx, 'left');
+            showGuide(guideY, by, 'top');
+            return { tx: tx + (bx ? bx.d / scale : 0), ty: ty + (by ? by.d / scale : 0) };
+        }
+
+        // Double-click a title: a card goes back to the default size, a panel to its default spot and size
+        document.addEventListener('dblclick', e => {
+            const handle = e.target.closest('.handle');
+            if (!handle) return;
+            const el = handle.closest('.movable');
+            if (isCard(el)) {
+                el.style.width = el.dataset.w = `${defaultWidth()}px`;
+                el.style.height = el.dataset.h = '';
+                saveLayout(el);
+                drawWires();
+                return;
+            }
+            forget(el);
+            el.style.width = el.style.height = el.dataset.w = el.dataset.h = '';
+            place(el, 0, 0);
+        });
+
+        // ---- Connections: out port of one card -> another card, which then runs after it ----
+        const wires = document.getElementById('wires');
+        const wiresBack = document.getElementById('wires-back');
+        const labels = document.getElementById('wire-labels');
+        const SVG = 'http://www.w3.org/2000/svg';
+        // A card's links are comma-separated lists of node ids, one per out port, so one card can lead to many.
+        // Cards have one list (.next); a diamond has two: .next (true, green port) and .next-else (false, red port)
+        const linkFields = node => [...node.querySelectorAll('input.next, input.next-else')];
+        const idsIn = field => field.value.split(',').filter(Boolean);
+        const writeIds = (field, ids) => { field.value = ids.join(','); };
+        const nextOf = node => linkFields(node).flatMap(idsIn);
+        const fieldOf = port => port.closest('.node').querySelector(`input.${port.dataset.list || 'next'}`);
+        const portOf = (node, field) => node.querySelector(field.classList.contains('next-else') ? '.port-no' : '.port-out');
+        const addNext = (field, id) => {
+            if (!idsIn(field).includes(id)) writeIds(field, [...idsIn(field), id]);
+            drawWires();
+        };
+
+        // Optional condition per link, as JSON on the card the link starts from: {"q1": "status == 200"}
+        const whenOf = node => { try { return JSON.parse(node.querySelector('input.when').value || '{}'); } catch { return {}; } };
+        const setWhen = (node, when) => { node.querySelector('input.when').value = Object.keys(when).length ? JSON.stringify(when) : ''; };
+
+        function unlink(node, id) {
+            linkFields(node).forEach(field => writeIds(field, idsIn(field).filter(x => x !== id)));
+            const when = whenOf(node);
+            delete when[id];
+            setWhen(node, when);
+        }
+
+        function disconnectInto(id) {
+            nodes().forEach(n => unlink(n, id));
+        }
+
+        // Click a link (or its label): give it a condition, or unlink it
+        function editLink(node, id, ev) {
+            document.querySelector('.wire-edit')?.remove();
+            const box = Object.assign(document.createElement('div'), { className: 'wire-edit' });
+            box.style.left = `${ev.clientX}px`;
+            box.style.top = `${ev.clientY}px`;
+            const caption = Object.assign(document.createElement('span'), { textContent: 'run if' });
+            // An expression, or "python: ..." / "java: ..." for a script check (one line: the expression to return)
+            const saved = whenOf(node)[id] || '';
+            const prefix = /^(python|java):\s*/i.exec(saved);
+            const lang = Object.assign(document.createElement('select'), { title: 'expression, or a python / java check (it can set(...) variables for this link)' });
+            for (const [value, label] of [['', 'expression'], ['python', 'python'], ['java', 'java']]) {
+                lang.append(Object.assign(document.createElement('option'), { value, textContent: label, selected: (prefix?.[1].toLowerCase() ?? '') === value }));
+            }
+            const LINK_PLACEHOLDERS = { '': 'always, or e.g. status == 200', python: 'prev["status"] == 200 and vars["state"] == "done"', java: 'num("status") == 200 && var("state").equals("done")' };
+            const input = Object.assign(document.createElement('input'), {
+                value: prefix ? saved.slice(prefix[0].length) : saved, placeholder: LINK_PLACEHOLDERS[lang.value], spellcheck: false,
+            });
+            lang.addEventListener('change', () => { input.placeholder = LINK_PLACEHOLDERS[lang.value]; input.focus(); });
+            const remove = Object.assign(document.createElement('button'), { type: 'button', textContent: 'Unlink', title: 'Remove this link' });
+            box.append(caption, lang, input, remove);
+            document.body.appendChild(box);
+            input.focus();
+
+            const outside = e => { if (!box.contains(e.target)) save(); };
+            const close = () => {
+                box.remove();
+                removeEventListener('pointerdown', outside, true);
+                drawWires();
+            };
+            const save = () => {
+                const when = whenOf(node), text = input.value.trim();
+                if (text) when[id] = lang.value ? `${lang.value}: ${text}` : text; else delete when[id];
+                setWhen(node, when);
+                close();
+            };
+            input.addEventListener('keydown', e => {
+                if (e.key === 'Enter') { e.preventDefault(); save(); }
+                if (e.key === 'Escape') close();
+            });
+            remove.addEventListener('click', () => { unlink(node, id); close(); });
+            setTimeout(() => addEventListener('pointerdown', outside, true));
+        }
+
+        // Would connecting from -> to make a loop? (can "from" be reached from "to"?)
+        function loops(from, to) {
+            const seen = new Set(), todo = [to];
+            while (todo.length) {
+                const n = todo.pop();
+                if (n === from) return true;
+                if (!n || seen.has(n)) continue;
+                seen.add(n);
+                nextOf(n).forEach(id => todo.push(byNode(id)));
+            }
+            return false;
+        }
+
+        // Middle of an element, in board coordinates (wires are drawn on the board, so they pan and zoom with it)
+        function center(el) {
+            const r = el.getBoundingClientRect();
+            return toBoard(r.left + r.width / 2, r.top + r.height / 2);
+        }
+
+        function curve(a, b) {
+            const bend = Math.max(40, Math.abs(b.y - a.y) / 2);
+            return `M${a.x},${a.y} C${a.x},${a.y + bend} ${b.x},${b.y - bend} ${b.x},${b.y}`;
+        }
+
+        // Sideways curve, for config links that run left/right
+        function sideCurve(a, b) {
+            const bend = Math.max(40, Math.abs(b.x - a.x) / 2) * (b.x >= a.x ? 1 : -1);
+            return `M${a.x},${a.y} C${a.x + bend},${a.y} ${b.x - bend},${b.y} ${b.x},${b.y}`;
+        }
+
+        function path(d, cls, layer = wires) {
+            const p = document.createElementNS(SVG, 'path');
+            p.setAttribute('d', d);
+            if (cls) p.setAttribute('class', cls);
+            layer.appendChild(p);
+            return p;
+        }
+
+        // Redraw at most once per frame, however many things moved or resized
+        let wiresQueued = false;
+        // Each query card shows what its DB config is (its linked one, else the default): PostgreSQL, MySQL, MongoDB,
+        // Redis, and which database; the colour, icon and the text box's hint follow
+        const DB_LABELS = { postgres: 'PostgreSQL', mysql: 'MySQL / MariaDB', mongodb: 'MongoDB', redis: 'Redis' };
+        const DB_HINTS = {
+            postgres: "SQL: SELECT * FROM orders WHERE processing_id = '$(processingId)';",
+            mysql: "SQL: SELECT * FROM customers WHERE tier = 'gold';",
+            mongodb: 'mongosh: db.reviews.find({ product: "$(product)" }).toArray()   (its result is the next cards\' json)',
+            redis: 'One command per line:\nHGETALL product:$(product)\nGET stock:$(product)',
+        };
+        const storeLabel = panel => {
+            const type = panel?.querySelector('select.db-type')?.value || 'postgres';
+            const url = panel?.querySelector('.db-url')?.value || '';
+            return type === 'mysql' ? (/mariadb/i.test(url) ? 'MariaDB' : 'MySQL') : DB_LABELS[type];
+        };
+        function updateDbBadges() {
+            const panels = configs('db');
+            panels.forEach((panel, i) => {
+                const type = panel.querySelector('select.db-type')?.value || 'postgres';
+                if (panel.dataset.db !== type) panel.dataset.db = type;
+                const title = `DB config ${i + 1} · ${storeLabel(panel)}`;
+                const shown = panel.querySelector('.title');
+                if (shown.textContent !== title) shown.textContent = title;
+            });
+            const fallback = panels.find(p => p.querySelector('.default-box')?.checked) || panels[0];
+            nodes('query').forEach(card => {
+                const panel = panels[cfgOf(card)] || fallback;
+                const type = panel?.querySelector('select.db-type')?.value || 'postgres';
+                const database = (panel?.querySelector('.db-url')?.value || '').split('?')[0].split('/').pop();
+                if (card.dataset.db !== type) card.dataset.db = type;
+                let badge = card.querySelector(':scope > .db-badge');
+                if (!badge) {
+                    badge = Object.assign(document.createElement('span'), { className: 'db-badge' });
+                    card.querySelector(':scope > h2').after(badge);
+                }
+                const text = storeLabel(panel) + (database ? ` · ${database}` : '');
+                if (badge.textContent !== text) badge.textContent = text;
+                const sql = card.querySelector('textarea.sql');
+                if (sql && sql.placeholder !== DB_HINTS[type]) sql.placeholder = DB_HINTS[type];
+            });
+        }
+        document.addEventListener('change', e => { if (e.target.matches?.('select.db-type, .default-box')) updateDbBadges(); });
+        document.addEventListener('input', e => { if (e.target.matches?.('.db-url')) updateDbBadges(); });
+
+        function drawWires() {
+            try { updateDbBadges(); } catch {}   // early on, before the panels are set up
+            if (wiresQueued) return;
+            wiresQueued = true;
+            requestAnimationFrame(() => { wiresQueued = false; redrawWires(); });
+        }
+
+        function redrawWires() {
+            wires.replaceChildren();
+            wiresBack.replaceChildren();
+            labels.replaceChildren();
+
+            const all = nodes();
+            all.forEach(n => n.querySelectorAll('.port').forEach(p => p.classList.remove('linked')));
+            all.forEach(node => linkFields(node).forEach(field => {
+                const out = portOf(node, field), when = whenOf(node);
+                const from = field.classList.contains('next-else') ? 'from-no'
+                        : node.dataset.kind === 'decision' ? 'from-yes'
+                        : node.dataset.kind === 'http' ? 'from-http'
+                        : node.dataset.kind === 'kafka' ? 'from-kafka' : '';
+                idsIn(field).forEach(id => {
+                    const target = byNode(id);
+                    if (!target || target === node) return;
+                    const into = target.querySelector('.port-in');
+                    out.classList.add('linked');
+                    into.classList.add('linked');
+                    const a = center(out), b = center(into), d = curve(a, b);
+                    const hit = path(d, 'hit', wiresBack);  // wide invisible line, easier to click
+                    hit.addEventListener('click', ev => editLink(node, id, ev));
+                    hit.appendChild(document.createElementNS(SVG, 'title')).textContent = 'Click to add a condition or unlink';
+                    path(d, `${from} ${when[id] ? 'when' : ''}`.trim(), wiresBack);
+                    if (when[id]) {
+                        // The curve is symmetric, so its middle is halfway between the two ports
+                        const label = Object.assign(document.createElement('div'), { className: 'wire-label', textContent: `if ${when[id]}`, title: `Runs only if ${when[id]} (click to edit)` });
+                        label.style.left = `${(a.x + b.x) / 2}px`;
+                        label.style.top = `${(a.y + b.y) / 2}px`;
+                        label.style.setProperty('--c', getComputedStyle(out).getPropertyValue('--accent'));
+                        label.addEventListener('click', ev => editLink(node, id, ev));
+                        labels.appendChild(label);
+                    }
+                });
+            }));
+
+            // Dashed config links: card's square/triangle/circle -> its config panel (only to the open tab, and
+            // not while the panels are hidden)
+            Object.keys(CONFIGS).flatMap(configs).forEach(p => p.querySelector('.cfg-port').classList.remove('linked'));
+            all.forEach(node => {
+                const port = node.querySelector('.cfg-port');
+                if (!port) return;  // if diamonds don't use a config
+                const panel = configs(configKindOf(node))[cfgOf(node)];
+                port.classList.toggle('linked', !!panel);
+                if (!panel || !asideOpen() || panel.closest('[hidden]')) return;
+                const into = panel.querySelector('.cfg-port');
+                into.classList.add('linked');
+                const d = sideCurve(center(port), center(into));
+                const hit = path(d, 'hit', wiresBack);
+                hit.addEventListener('click', () => setCfg(node, -1));
+                hit.appendChild(document.createElementNS(SVG, 'title')).textContent = 'Click to unlink the config';
+                path(d, `cfg ${configKindOf(node)}`, wiresBack);
+            });
+        }
+
+        // Drag from an out port onto another card
+        document.addEventListener('pointerdown', e => {
+            const port = e.target.closest('.port-out');
+            if (!port || e.button !== 0) return;
+            e.preventDefault();
+            const from = port.closest('.node'), field = fieldOf(port);
+            const start = center(port);
+            const temp = path(curve(start, start), 'temp');
+            let target = null;
+
+            const move = ev => {
+                temp.setAttribute('d', curve(start, toBoard(ev.clientX, ev.clientY)));
+                const over = document.elementFromPoint(ev.clientX, ev.clientY)?.closest('.node');
+                const ok = over && over !== from && !nextOf(from).includes(over.dataset.node) && !loops(from, over) ? over : null;
+                if (ok !== target) {
+                    target?.classList.remove('drop-target');
+                    ok?.classList.add('drop-target');
+                    target = ok;
+                }
+            };
+            const up = () => {
+                removeEventListener('pointermove', move);
+                removeEventListener('pointerup', up);
+                temp.remove();
+                target?.classList.remove('drop-target');
+                if (target) addNext(field, target.dataset.node);
+            };
+            addEventListener('pointermove', move);
+            addEventListener('pointerup', up);
+        });
+
+        // Drag from a card's square/triangle onto a config panel of the matching kind
+        document.addEventListener('pointerdown', e => {
+            const port = e.target.closest('.node .cfg-port');
+            if (!port || e.button !== 0) return;
+            e.preventDefault();
+            const from = port.closest('.node');
+            const kind = configKindOf(from);
+            showKind(kind);  // so the configs it can link to are on screen
+            const start = center(port);
+            const temp = path(sideCurve(start, start), 'temp');
+            let target = null;
+
+            const move = ev => {
+                temp.setAttribute('d', sideCurve(start, toBoard(ev.clientX, ev.clientY)));
+                const over = document.elementFromPoint(ev.clientX, ev.clientY)?.closest('.config');
+                const ok = over && configs(kind).includes(over) ? over : null;
+                if (ok !== target) {
+                    target?.classList.remove('drop-target');
+                    ok?.classList.add('drop-target');
+                    target = ok;
+                }
+            };
+            const up = () => {
+                removeEventListener('pointermove', move);
+                removeEventListener('pointerup', up);
+                temp.remove();
+                target?.classList.remove('drop-target');
+                if (target) setCfg(from, +target.dataset.index);
+            };
+            addEventListener('pointermove', move);
+            addEventListener('pointerup', up);
+        });
+
+        // Click an in port: disconnect whatever runs before this card
+        document.addEventListener('click', e => {
+            const port = e.target.closest('.port-in');
+            if (!port) return;
+            disconnectInto(port.closest('.node').dataset.node);
+            drawWires();
+        });
+
+        addEventListener('resize', applyView);
+
+        // ---- Sessions: save the page under a name, open a saved one or a copy of this one in a new tab ----
+        const sessionMenu = document.querySelector('.session-menu');
+        const sessionName = sessionMenu.querySelector('.session-name');
+        const SESSION_NAME = /^\w[\w .-]{0,59}$/;
+
+        function toggleSessions(open = sessionMenu.hidden) {
+            sessionMenu.hidden = !open;
+            if (open) sessionName.focus();
+        }
+
+        // Closes on a click anywhere else, or Escape
+        document.addEventListener('pointerdown', e => {
+            if (!sessionMenu.hidden && !e.target.closest('.session-menu, .pin.sessions')) toggleSessions(false);
+        }, true);
+        addEventListener('keydown', e => { if (e.key === 'Escape' && !sessionMenu.hidden) toggleSessions(false); });
+        sessionName.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); saveSession(); } });
+
+        function saveSession() {
+            const name = sessionName.value.trim();
+            if (!SESSION_NAME.test(name)) {
+                showToast('A session name is up to 60 letters, digits, spaces, dots, dashes or underscores');
+                sessionName.focus();
+                return;
+            }
+            const button = sessionMenu.querySelector('button[name="saveAs"]');
+            button.value = name;
+            form.requestSubmit(button);
+            toggleSessions(false);
+
+            // This tab is now that session; it goes to the top of the list
+            document.querySelector('.session-label').textContent = name;
+            document.title = `${name} · Client`;
+            const list = sessionMenu.querySelector('.session-list');
+            list.querySelectorAll('[data-open]').forEach(item => { if (item.dataset.open === name) item.remove(); });
+            const item = Object.assign(document.createElement('button'), { type: 'button', className: 'menu-item' });
+            item.dataset.open = name;
+            item.append(Object.assign(document.createElement('span'), { className: 'name', textContent: name }),
+                    Object.assign(document.createElement('span'), { className: 'when', textContent: 'just now' }));
+            list.prepend(item);
+        }
+
+        // Open a saved session in a new tab
+        sessionMenu.addEventListener('click', e => {
+            const item = e.target.closest('[data-open]');
+            if (!item) return;
+            window.open(`${sessionMenu.dataset.openUrl}?name=${encodeURIComponent(item.dataset.open)}`, '_blank');
+            toggleSessions(false);
+        });
+
+        // Duplicate: the server keeps a copy of the page as it is now, the new tab opens on it
+        // Load a session file: the server checks and saves it under the file's name, then it opens in a new tab
+        async function importSession(input) {
+            const file = input.files[0];
+            input.value = '';
+            if (!file) return;
+            toggleSessions(false);
+            const tab = window.open('about:blank', '_blank');  // opened while it's still a click, or it gets blocked
+            try {
+                const name = file.name.replace(/\.json$/i, '');
+                const response = await fetch(`${form.action.replace(/\/client.*$/, '')}/client/session/import?name=${encodeURIComponent(name)}`,
+                        { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: await file.text() });
+                const reply = await response.json();
+                if (!response.ok || reply.error) throw new Error(reply.error || `HTTP ${response.status}`);
+                const url = `${sessionMenu.dataset.openUrl}?name=${encodeURIComponent(reply.name)}`;
+                if (tab) tab.location = url; else window.open(url, '_blank');
+                showToast(`Session "${reply.name}" loaded`);
+            } catch (err) {
+                tab?.close();
+                showToast(`Couldn't load ${file.name}: ${err.message}`);
+            }
+        }
+
+        async function duplicateSession() {
+            toggleSessions(false);
+            const tab = window.open('about:blank', '_blank');  // opened right away, while it's still a click, or it gets blocked
+            const data = new FormData(form);
+            data.append('duplicate', '1');
+            try {
+                const response = await fetch(form.action, { method: 'POST', body: new URLSearchParams(data) });
+                const copy = new URL(response.url).searchParams.get('ws');
+                // Same view (pan / zoom) as here
+                try { localStorage.setItem(`view:${copy}`, localStorage.getItem(VIEW)); } catch {}
+                if (tab) tab.location = response.url; else window.open(response.url, '_blank');
+            } catch (err) {
+                tab?.close();
+                showToast(`Failed: ${err.message}`);
+            }
+        }
+
+        // ---- Submit in the background: save/run/send without reloading, so the screen never moves ----
+        function showToast(text) {
+            document.querySelector('.toast')?.remove();
+            const toast = document.createElement('div');
+            toast.className = 'toast';
+            toast.textContent = text;
+            document.body.appendChild(toast);
+        }
+
+        let lastSubmitButton = null;
+        document.addEventListener('click', e => {
+            const button = e.target.closest('button[type="submit"]');
+            if (button) lastSubmitButton = button;
+        }, true);
+
+        document.addEventListener('submit', async e => {
+            // Enter in a config field: save that kind in the background, like its Save pin (never a page reload)
+            const configKind = Object.keys(CONFIGS).find(kind => CONFIGS[kind].form === e.target.id);
+            if (configKind) {
+                e.preventDefault();
+                saveConfigs(configKind);
+                return;
+            }
+            e.preventDefault();
+            const target = e.target;
+            const button = e.submitter || (lastSubmitButton && (lastSubmitButton.form === target || lastSubmitButton.getAttribute('form') === target.id) ? lastSubmitButton : null);
+            lastSubmitButton = null;
+            // Send/Run/Consume use the HTTP configs as they are on screen (for the HTTP cards in the chain), including added but unsaved ones
+            // and Save session (its file keeps the configs, without the bearer tokens); not Save page, so tokens stay out of it
+            target.querySelectorAll('.posted-http').forEach(field => field.remove());
+            if (target === form && ['send', 'run', 'consume', 'saveAs'].includes(button?.name)) {
+                document.querySelectorAll('#http-configs details.config').forEach((panel, i) => {
+                    const values = { defaultConfig: panel.querySelector('.default-box').checked };
+                    panel.querySelectorAll('input[name^="configs["]:not(.default-box), textarea[name^="configs["]')
+                         .forEach(field => { values[field.name.replace(/^configs\[\d+\]\./, '')] = field.value; });
+                    for (const [name, value] of Object.entries(values)) {
+                        target.appendChild(Object.assign(document.createElement('input'),
+                                { type: 'hidden', className: 'posted-http', name: `httpConfigs[${i}].${name}`, value }));
+                    }
+                });
+            }
+            const data = new FormData(target);
+            if (!button?.name) {
+                showToast('Choose Save, Run, or Send.');
+                return;
+            }
+            data.append(button.name, button.value);
+            button?.classList.add('busy');
+            if (button) button.disabled = true;
+            try {
+                // The server answers with a redirect to the updated page; take just what changed from it
+                const response = await fetch(target.action, { method: 'POST', body: new URLSearchParams(data) });
+                const page = new DOMParser().parseFromString(await response.text(), 'text/html');
+                page.querySelectorAll('textarea.out[name]').forEach(out => {
+                    const mine = target.querySelector(`textarea.out[name="${out.name}"]`);
+                    if (mine) mine.value = out.value;
+                });
+                page.querySelectorAll('.default-box[name]').forEach(box => {
+                    const mine = document.querySelector(`.default-box[name="${box.name}"]`);
+                    if (mine) mine.checked = box.checked;
+                });
+                const toast = page.querySelector('.toast');
+                if (toast) showToast(toast.textContent);
+                if (!response.ok) showToast(`Failed: HTTP ${response.status}`);
+            } catch (err) {
+                showToast(`Failed: ${err.message}`);
+            } finally {
+                button?.classList.remove('busy');
+                if (button) button.disabled = false;
+            }
+        });
+
+        // ---- Bearer token of the HTTP configs: paste just the JWT, decode it into a popup ----
+
+        // Only the token: spaces and line breaks from the paste, quotes and a "Bearer " in front go
+        const cleanJwt = text => text.trim().replace(/^"|"$/g, '').trim().replace(/^bearer\b/i, '').replace(/[\s"]/g, '');
+
+        function base64UrlJson(part) {
+            const base64 = part.replace(/-/g, '+').replace(/_/g, '/').padEnd(Math.ceil(part.length / 4) * 4, '=');
+            const bytes = Uint8Array.from(atob(base64), ch => ch.charCodeAt(0));
+            return JSON.parse(new TextDecoder().decode(bytes));
+        }
+
+        // {header, payload, signature} or throws with why it isn't a JWT
+        function decodeJwt(token) {
+            const parts = token.split('.');
+            if (parts.length === 5) throw new Error('This is an encrypted token (JWE): its payload can\'t be read without the key.');
+            if (parts.length !== 3) throw new Error(`A JWT has 3 parts separated by dots, this has ${parts.length}.`);
+            let header, payload;
+            try { header = base64UrlJson(parts[0]); } catch { throw new Error('The header (first part) isn\'t base64url JSON.'); }
+            try { payload = base64UrlJson(parts[1]); } catch { throw new Error('The payload (second part) isn\'t base64url JSON.'); }
+            return { header, payload, signature: parts[2] };
+        }
+
+        function relative(seconds) {
+            const ago = seconds < 0, s = Math.abs(seconds);
+            const text = s < 90 ? `${Math.round(s)}s` : s < 5400 ? `${Math.round(s / 60)} min`
+                       : s < 172800 ? `${Math.round(s / 3600)} h` : `${Math.round(s / 86400)} days`;
+            return ago ? `${text} ago` : `in ${text}`;
+        }
+
+        // The line under the field: expired or not, at a glance
+        function updateJwtInfo(input) {
+            const info = input.closest('fieldset').querySelector('.jwt-info');
+            info.className = 'jwt-info';
+            info.textContent = '';
+            const token = cleanJwt(input.value);
+            if (!token) return;
+            try {
+                const { payload } = decodeJwt(token);
+                const now = Date.now() / 1000;
+                const who = payload.sub ?? payload.preferred_username ?? payload.email ?? '';
+                if (typeof payload.exp === 'number') {
+                    const expired = payload.exp < now;
+                    info.classList.add(expired ? 'bad' : 'ok');
+                    info.textContent = `${expired ? 'expired' : 'expires'} ${relative(payload.exp - now)}${who ? ` · ${who}` : ''}`;
+                } else {
+                    info.textContent = `no expiry${who ? ` · ${who}` : ''}`;
+                }
+            } catch (err) {
+                info.classList.add('bad');
+                info.textContent = 'not a readable JWT';
+            }
+        }
+
+        document.addEventListener('input', e => {
+            if (!e.target.matches?.('input.jwt')) return;
+            const cleaned = cleanJwt(e.target.value);
+            if (cleaned !== e.target.value) e.target.value = cleaned;
+            updateJwtInfo(e.target);
+        });
+        document.querySelectorAll('input.jwt').forEach(updateJwtInfo);
+
+        const jwtDialog = document.querySelector('dialog.jwt-dialog');
+        let jwtPayloadText = '';
+        jwtDialog.querySelector('.close').addEventListener('click', () => jwtDialog.close());
+        jwtDialog.addEventListener('click', e => { if (e.target === jwtDialog) jwtDialog.close(); });   // the backdrop
+        jwtDialog.querySelector('.copy').addEventListener('click', async () => {
+            try { await navigator.clipboard.writeText(jwtPayloadText); showToast('Payload copied'); }
+            catch { showToast('Couldn\'t copy: the browser blocked the clipboard'); }
+        });
+
+        function showJwt(button) {
+            const panel = button.closest('.config');
+            const token = cleanJwt(panel.querySelector('input.jwt').value);
+            const body = jwtDialog.querySelector('.body');
+            const el = (tag, props = {}, text = '') => Object.assign(document.createElement(tag), props, { textContent: text });
+            body.replaceChildren();
+            jwtPayloadText = '';
+            jwtDialog.querySelector('.title').textContent = `JWT · ${panel.querySelector('.title').textContent}`;
+            jwtDialog.querySelector('.copy').disabled = true;
+            if (!token) {
+                body.append(el('div', { className: 'error' }, 'Paste a token in the Bearer token field first.'));
+            } else {
+                try {
+                    const { header, payload, signature } = decodeJwt(token);
+                    jwtPayloadText = JSON.stringify(payload, null, 2);
+                    jwtDialog.querySelector('.copy').disabled = false;
+                    const now = Date.now() / 1000;
+                    const times = Object.entries({ exp: 'expires', iat: 'issued', nbf: 'valid from', auth_time: 'authenticated' })
+                                        .filter(([claim]) => typeof payload[claim] === 'number');
+                    if (times.length) {
+                        body.append(el('h3', {}, 'Times'));
+                        const grid = el('div', { className: 'times' });
+                        for (const [claim, label] of times) {
+                            const at = payload[claim];
+                            const value = el('span', {}, `${new Date(at * 1000).toLocaleString()} (${relative(at - now)})`);
+                            if (claim === 'exp') value.style.color = at < now ? 'var(--red)' : 'var(--green)';
+                            grid.append(el('span', { className: 'name' }, `${claim} · ${label}`), value);
+                        }
+                        body.append(grid);
+                    }
+                    body.append(el('h3', {}, 'Payload'), el('pre', {}, jwtPayloadText),
+                                el('h3', {}, 'Header'), el('pre', {}, JSON.stringify(header, null, 2)),
+                                el('div', { className: 'note' }, `Signature (${signature.length} chars) not verified: this only decodes the token.`));
+                } catch (err) {
+                    body.append(el('div', { className: 'error' }, err.message));
+                }
+            }
+            jwtDialog.showModal();
+        }
+
+        renumber();
+        renumberConfigs();
+        let savedKinds = null;
+        try { savedKinds = JSON.parse(localStorage.getItem('configKinds')); } catch {}
+        showKinds(Array.isArray(savedKinds) ? savedKinds.filter(k => CONFIGS[k]) : Object.keys(CONFIGS));
+        document.querySelectorAll('.io .lang').forEach(setLanguage);
+        form.querySelectorAll('.check .mode').forEach(setMode);
+        convertOldLayouts();
+        document.querySelectorAll('.movable').forEach(initLayout);
+        startBoard();
+        drawWires();
+    </script>
+</body>
+</html>

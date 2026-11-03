@@ -1,0 +1,66 @@
+<!doctype html>
+<html xmlns:th="http://www.thymeleaf.org">
+<body>
+<!-- A Kafka card: reads one message of a topic (read only) into its box, takes a value out of it by JSON path,
+     then runs its java on it. k is null for the blank one that the "Kafka" button copies. -->
+<section th:fragment="card(k, i)" class="island movable node kafka-card" data-kind="kafka"
+         th:id="|kafka-${i}|" th:data-node="|k${i}|">
+    <span class="port port-in" title="Click to disconnect the card that runs before this one"></span>
+    <h2 class="handle" title="Drag to move, double-click to reset" th:text="|Kafka ${i + 1}|">Kafka 1</h2>
+    <input type="hidden" class="next" th:name="|subscribers[${i}].next|" th:value="${k?.next}">
+    <input type="hidden" class="when" th:name="|subscribers[${i}].when|" th:value="${k?.when}">
+    <input type="hidden" class="layout" th:name="|subscribers[${i}].layout|" th:value="${k?.layout}">
+    <span class="cfg-port circle" title="Drag onto a Kafka config to use it (click the dashed line to unlink)"></span>
+    <input type="hidden" class="cfg" th:name="|subscribers[${i}].config|" th:value="${k != null ? k.config : -1}">
+    <div class="request">
+        <input th:name="|subscribers[${i}].topic|" th:value="${k?.topic}" placeholder="topic, e.g. orders.events">
+        <button type="submit" name="consume" th:value="${i}">Consume</button>
+    </div>
+    <div class="consume-opts">
+        <select th:name="|subscribers[${i}].mode|"
+                title="latest: the newest message on the topic now / next: wait for the next one to arrive">
+            <option value="latest" th:selected="${k?.mode != 'next'}">latest message</option>
+            <option value="next" th:selected="${k?.mode == 'next'}">wait for next</option>
+        </select>
+        <label title="How long to wait for the cluster, or for the next message"><span>timeout s</span>
+            <input type="number" min="1" max="300" th:name="|subscribers[${i}].timeout|" th:value="${k != null ? k.timeout : 30}">
+        </label>
+    </div>
+    <textarea class="out meta" rows="2" readonly th:name="|subscribers[${i}].meta|" th:text="${k?.meta}"
+              placeholder="Partition, offset, time, key and headers of the message..."></textarea>
+    <textarea class="out message" rows="8" readonly th:name="|subscribers[${i}].output|" th:text="${k?.output}"
+              placeholder="Last consumed message..."></textarea>
+    <div class="extractor">
+        <label><span>JSON path</span>
+            <input th:name="|subscribers[${i}].extractor|" th:value="${k?.extractor}"
+                   placeholder="state or processingId">
+        </label>
+        <button type="submit" name="extractMessage" th:value="${i}">Extract</button>
+        <textarea class="out" th:name="|subscribers[${i}].extractorOutput|" rows="2" readonly
+                  th:text="${k?.extractorOutput}" placeholder="Extracted value..."></textarea>
+    </div>
+    <div class="io script" th:classappend="${k != null and k.scriptHidden} ? 'py-hidden'">
+        <div class="py-bar">
+            <button type="button" class="py-toggle" onclick="togglePy(this)" title="Show / hide the script">script</button>
+            <select class="lang kafka-lang" th:name="|subscribers[${i}].scriptLanguage|" onchange="setLanguage(this)"
+                    title="Language of the script that runs on the message">
+                <option value="java" th:selected="${k == null or k.scriptLanguage != 'python'}">java</option>
+                <option value="python" th:selected="${k != null and k.scriptLanguage == 'python'}">python</option>
+            </select>
+            <button type="submit" class="run-script" name="script" th:value="${i}"
+                    title="Run the script again on the message in the box above">Run</button>
+        </div>
+        <input type="hidden" class="py-flag" th:name="|subscribers[${i}].scriptHidden|" th:value="${k != null and k.scriptHidden}">
+        <textarea class="py" rows="6" th:name="|subscribers[${i}].script|" th:text="${k?.script}"
+                  placeholder=""></textarea>
+    </div>
+    <textarea class="out script-out" rows="2" readonly th:name="|subscribers[${i}].scriptOutput|" th:text="${k?.scriptOutput}"
+              placeholder="What the script printed and set..."></textarea>
+    <span class="port port-out" title="Drag onto another card to run it after this one"></span>
+    <div class="mini">
+        <button type="button" class="add" onclick="duplicateNode(this)" title="Add a copy of this card (same values and links)">+</button>
+        <button type="button" class="remove" onclick="removeNode(this)" title="Remove this card">&minus;</button>
+    </div>
+</section>
+</body>
+</html>

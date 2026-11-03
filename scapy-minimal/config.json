@@ -1,0 +1,8 @@
+{
+  "uris": [],
+  "methods": [],
+  "dstPorts": [],
+  "srcPorts": [],
+  "interfaces": ["lo"],
+  "webPort": 29922
+}

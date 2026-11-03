@@ -1,0 +1,14 @@
+# Builds, IDEs, python
+target/
+.idea/
+*.iml
+.vscode/
+__pycache__/
+.venv/
+*.pcap
+
+# Made when it runs: logs, and the client's saved configs, page and sessions (run.sh writes the sample sessions)
+logs/
+client/workspace.json
+client/*-config.json
+client/sessions/
